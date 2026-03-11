@@ -456,7 +456,7 @@ course_name = st.text_input(
 c1, c2 = st.columns(2)
 with c1:
     unit_number = st.text_input(
-        "Unit 01 | Chapter 01 ",
+        "Unit Number and title ",
         placeholder="e.g. UNIT 03 | CHAPTER 06"
     )
 

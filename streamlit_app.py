@@ -456,14 +456,8 @@ course_name = st.text_input(
 c1, c2 = st.columns(2)
 with c1:
     unit_number = st.text_input(
-        "Unit / Chapter Number",
+        "Unit 01 | Chapter 01 ",
         placeholder="e.g. UNIT 03 | CHAPTER 06"
-    )
-
-with c2:
-    unit_title = st.text_input(
-        "Unit Title (optional)",
-        placeholder="e.g. Sports Coaching Principles"
     )
 
 if st.button("👁 Preview Intro", type="secondary"):

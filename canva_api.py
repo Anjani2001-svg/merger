@@ -1,35 +1,44 @@
 """
 Canva Connect API integration.
-OAuth 2.0 with PKCE + Asset Upload for video files.
+OAuth 2.0 with PKCE + Asset Upload + Create Design + Open Editor.
 """
 
-import os, hashlib, secrets, base64, time, json
-from urllib.parse import urlencode, quote
+import os
+import hashlib
+import secrets
+import base64
+import time
+import json
+from urllib.parse import urlencode
+
 import requests
 import streamlit as st
 
 # ── Canva API endpoints ──
-CANVA_AUTH_URL   = "https://www.canva.com/api/oauth/authorize"
-CANVA_TOKEN_URL  = "https://api.canva.com/rest/v1/oauth/token"
-CANVA_UPLOAD_URL = "https://api.canva.com/rest/v1/asset-uploads"
-CANVA_UPLOAD_JOB = "https://api.canva.com/rest/v1/asset-uploads/{job_id}"
+CANVA_AUTH_URL        = "https://www.canva.com/api/oauth/authorize"
+CANVA_TOKEN_URL       = "https://api.canva.com/rest/v1/oauth/token"
+CANVA_UPLOAD_URL      = "https://api.canva.com/rest/v1/asset-uploads"
+CANVA_UPLOAD_JOB_URL  = "https://api.canva.com/rest/v1/asset-uploads/{job_id}"
+CANVA_CREATE_DESIGN   = "https://api.canva.com/rest/v1/designs"
+CANVA_GET_DESIGN      = "https://api.canva.com/rest/v1/designs/{design_id}"
 
 
 def _get_credentials():
     """Get Canva Client ID and Secret from Streamlit secrets or env."""
     cid = None
     sec = None
-    # Try Streamlit secrets first (for Streamlit Cloud)
+
     try:
         cid = st.secrets.get("CANVA_CLIENT_ID", None)
         sec = st.secrets.get("CANVA_CLIENT_SECRET", None)
     except Exception:
         pass
-    # Fallback to env vars (for local dev)
+
     if not cid:
         cid = os.environ.get("CANVA_CLIENT_ID", "")
     if not sec:
         sec = os.environ.get("CANVA_CLIENT_SECRET", "")
+
     return cid, sec
 
 
@@ -47,23 +56,20 @@ def is_connected():
 def _generate_pkce():
     """Generate PKCE code_verifier and code_challenge."""
     verifier = secrets.token_urlsafe(64)[:128]
-    digest   = hashlib.sha256(verifier.encode("ascii")).digest()
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
     challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     return verifier, challenge
 
 
 def get_redirect_uri():
     """Build the redirect URI for the current Streamlit app."""
-    # For Streamlit Cloud, use the app's URL
-    # For local dev, use localhost
     try:
-        # Try to get from secrets
         uri = st.secrets.get("CANVA_REDIRECT_URI", None)
         if uri:
             return uri
     except Exception:
         pass
-    # Fallback: construct from current URL or default
+
     return os.environ.get("CANVA_REDIRECT_URI", "http://127.0.0.1:8501/")
 
 
@@ -73,12 +79,12 @@ def start_auth_flow():
     verifier, challenge = _generate_pkce()
     state = secrets.token_urlsafe(32)
 
-    # Store PKCE verifier and state in session
     st.session_state["canva_code_verifier"] = verifier
-    st.session_state["canva_auth_state"]    = state
+    st.session_state["canva_auth_state"] = state
 
     redirect_uri = get_redirect_uri()
 
+<<<<<<< HEAD
     # Build URL manually — Canva needs literal colons in scopes
     scope_encoded = quote("asset:write asset:read", safe=":") 
     redirect_encoded = quote(redirect_uri, safe="")
@@ -94,62 +100,71 @@ def start_auth_flow():
         f"&redirect_uri={redirect_encoded}"
     )
     return url
+=======
+    params = {
+        "code_challenge": challenge,
+        "code_challenge_method": "s256",
+        "scope": "asset:write asset:read design:write design:read",
+        "response_type": "code",
+        "client_id": cid,
+        "state": state,
+        "redirect_uri": redirect_uri,
+    }
+    return CANVA_AUTH_URL + "?" + urlencode(params)
+>>>>>>> f11d4092f36251ede1d66e4b8a8620eec907967b
 
 
 def handle_callback(query_params):
-    """Exchange the auth code from Canva callback for an access token.
-    Returns True if successful."""
-    code  = query_params.get("code", [None])
+    """Exchange the auth code from Canva callback for an access token."""
+    code = query_params.get("code", [None])
     state = query_params.get("state", [None])
 
-    # Handle both list and string returns from st.query_params
-    if isinstance(code, list):  code  = code[0]  if code  else None
-    if isinstance(state, list): state = state[0] if state else None
+    if isinstance(code, list):
+        code = code[0] if code else None
+    if isinstance(state, list):
+        state = state[0] if state else None
 
     if not code:
         return False
 
-    # Verify state matches
     expected_state = st.session_state.get("canva_auth_state", "")
     if state != expected_state:
-        st.error("OAuth state mismatch — possible CSRF attack. Please try again.")
+        st.error("OAuth state mismatch. Please try again.")
         return False
 
-    # Exchange code for token
     cid, secret = _get_credentials()
-    verifier     = st.session_state.get("canva_code_verifier", "")
+    verifier = st.session_state.get("canva_code_verifier", "")
     redirect_uri = get_redirect_uri()
 
     body = {
-        "grant_type":    "authorization_code",
+        "grant_type": "authorization_code",
         "code_verifier": verifier,
-        "code":          code,
-        "redirect_uri":  redirect_uri,
+        "code": code,
+        "redirect_uri": redirect_uri,
     }
 
-    # Basic auth: base64(client_id:client_secret)
-    auth_str = base64.b64encode(f"{cid}:{secret}".encode()).decode()
+    auth_str = base64.b64encode(f"{cid}:{secret}".encode("utf-8")).decode("ascii")
 
     try:
         resp = requests.post(
             CANVA_TOKEN_URL,
             data=body,
             headers={
-                "Content-Type":  "application/x-www-form-urlencoded",
+                "Content-Type": "application/x-www-form-urlencoded",
                 "Authorization": f"Basic {auth_str}",
             },
-            timeout=15,
+            timeout=20,
         )
 
         if resp.status_code == 200:
             data = resp.json()
-            st.session_state["canva_access_token"]  = data["access_token"]
+            st.session_state["canva_access_token"] = data["access_token"]
             st.session_state["canva_refresh_token"] = data.get("refresh_token", "")
-            st.session_state["canva_token_expiry"]  = time.time() + data.get("expires_in", 14400)
+            st.session_state["canva_token_expiry"] = time.time() + data.get("expires_in", 14400)
             return True
-        else:
-            st.error(f"Canva token exchange failed: {resp.status_code} — {resp.text[:300]}")
-            return False
+
+        st.error(f"Canva token exchange failed: {resp.status_code} — {resp.text[:300]}")
+        return False
 
     except Exception as e:
         st.error(f"Canva auth error: {e}")
@@ -157,9 +172,9 @@ def handle_callback(query_params):
 
 
 def refresh_token_if_needed():
-    """Refresh the access token if it's about to expire."""
+    """Refresh access token if close to expiry."""
     expiry = st.session_state.get("canva_token_expiry", 0)
-    if time.time() < expiry - 300:  # 5 min buffer
+    if time.time() < expiry - 300:
         return True
 
     refresh = st.session_state.get("canva_refresh_token", "")
@@ -167,44 +182,51 @@ def refresh_token_if_needed():
         return False
 
     cid, secret = _get_credentials()
-    auth_str = base64.b64encode(f"{cid}:{secret}".encode()).decode()
+    auth_str = base64.b64encode(f"{cid}:{secret}".encode("utf-8")).decode("ascii")
 
     try:
         resp = requests.post(
             CANVA_TOKEN_URL,
             data={
-                "grant_type":    "refresh_token",
+                "grant_type": "refresh_token",
                 "refresh_token": refresh,
             },
             headers={
-                "Content-Type":  "application/x-www-form-urlencoded",
+                "Content-Type": "application/x-www-form-urlencoded",
                 "Authorization": f"Basic {auth_str}",
             },
-            timeout=15,
+            timeout=20,
         )
+
         if resp.status_code == 200:
             data = resp.json()
-            st.session_state["canva_access_token"]  = data["access_token"]
+            st.session_state["canva_access_token"] = data["access_token"]
             st.session_state["canva_refresh_token"] = data.get("refresh_token", refresh)
-            st.session_state["canva_token_expiry"]  = time.time() + data.get("expires_in", 14400)
+            st.session_state["canva_token_expiry"] = time.time() + data.get("expires_in", 14400)
             return True
     except Exception:
         pass
+
     return False
 
 
-def upload_video(video_bytes, filename="SLC_Video.mp4"):
-    """Upload a video to the user's Canva asset library.
-    Returns (success, message)."""
+def _auth_headers():
+    token = st.session_state.get("canva_access_token", "")
+    return {"Authorization": f"Bearer {token}"}
 
+
+def upload_video(video_bytes, filename="SLC_Video.mp4"):
+    """
+    Upload a video to the user's Canva uploads library.
+    Returns: (success, message, asset_id)
+    """
     if not refresh_token_if_needed():
-        return False, "Canva token expired. Please reconnect."
+        return False, "Canva token expired. Please reconnect.", None
 
     token = st.session_state.get("canva_access_token", "")
     if not token:
-        return False, "Not connected to Canva."
+        return False, "Not connected to Canva.", None
 
-    # Encode filename as base64 for the metadata header
     name_b64 = base64.b64encode(filename.encode("utf-8")).decode("ascii")
     metadata = json.dumps({"name_base64": name_b64})
 
@@ -213,47 +235,177 @@ def upload_video(video_bytes, filename="SLC_Video.mp4"):
             CANVA_UPLOAD_URL,
             data=video_bytes,
             headers={
-                "Authorization":         f"Bearer {token}",
-                "Content-Type":          "application/octet-stream",
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/octet-stream",
                 "Asset-Upload-Metadata": metadata,
             },
             timeout=120,
         )
 
-        if resp.status_code in (200, 201):
-            data = resp.json()
-            job_id = data.get("job", {}).get("id", "")
+        if resp.status_code not in (200, 201):
+            return False, f"Canva API error {resp.status_code}: {resp.text[:300]}", None
 
-            # Poll for completion
-            for _ in range(30):
-                time.sleep(2)
-                poll = requests.get(
-                    CANVA_UPLOAD_JOB.format(job_id=job_id),
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=15,
-                )
-                if poll.status_code == 200:
-                    pdata = poll.json()
-                    status = pdata.get("job", {}).get("status", "")
-                    if status == "success":
-                        asset_id = pdata.get("job", {}).get("asset", {}).get("id", "")
-                        return True, f"Uploaded to Canva! Asset ID: {asset_id}"
-                    elif status == "failed":
-                        err = pdata.get("job", {}).get("error", {}).get("message", "Unknown error")
-                        return False, f"Canva upload failed: {err}"
-                    # Still processing, continue polling
+        data = resp.json()
+        job_id = data.get("job", {}).get("id", "")
 
-            return False, "Upload timed out — check Canva manually."
+        if not job_id:
+            return False, "Upload started but no job ID was returned.", None
 
-        else:
-            return False, f"Canva API error {resp.status_code}: {resp.text[:300]}"
+        for _ in range(45):
+            time.sleep(2)
+            poll = requests.get(
+                CANVA_UPLOAD_JOB_URL.format(job_id=job_id),
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=20,
+            )
+
+            if poll.status_code == 200:
+                pdata = poll.json()
+                job = pdata.get("job", {})
+                status = job.get("status", "")
+
+                if status == "success":
+                    asset_id = job.get("asset", {}).get("id", "")
+                    return True, "Uploaded to Canva successfully.", asset_id
+
+                if status == "failed":
+                    err = job.get("error", {}).get("message", "Unknown error")
+                    return False, f"Canva upload failed: {err}", None
+
+        return False, "Upload timed out. Check Canva Uploads manually.", None
 
     except Exception as e:
-        return False, f"Upload error: {e}"
+        return False, f"Upload error: {e}", None
+
+
+def create_blank_video_design(title="SLC Video Edit"):
+    """
+    Create a blank Canva design and return its design_id.
+    Returns: (success, message, design_id)
+    """
+    if not refresh_token_if_needed():
+        return False, "Canva token expired. Please reconnect.", None
+
+    token = st.session_state.get("canva_access_token", "")
+    if not token:
+        return False, "Not connected to Canva.", None
+
+    # Safer option: use custom size 1920x1080
+    body = {
+        "design_type": {
+            "type": "custom",
+            "width": 1920,
+            "height": 1080,
+        },
+        "title": title,
+    }
+
+    try:
+        resp = requests.post(
+            CANVA_CREATE_DESIGN,
+            json=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            timeout=30,
+        )
+
+        if resp.status_code not in (200, 201):
+            return False, f"Create design failed: {resp.status_code} - {resp.text[:300]}", None
+
+        data = resp.json()
+        design_id = data.get("design", {}).get("id", "")
+
+        if not design_id:
+            return False, "Design created but no design ID was returned.", None
+
+        return True, "Design created successfully.", design_id
+
+    except Exception as e:
+        return False, f"Create design error: {e}", None
+
+
+def get_design_edit_url(design_id):
+    """
+    Get the Canva editor URL for a design.
+    Returns: (success, message, edit_url)
+    """
+    if not refresh_token_if_needed():
+        return False, "Canva token expired. Please reconnect.", None
+
+    token = st.session_state.get("canva_access_token", "")
+    if not token:
+        return False, "Not connected to Canva.", None
+
+    try:
+        resp = requests.get(
+            CANVA_GET_DESIGN.format(design_id=design_id),
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=20,
+        )
+
+        if resp.status_code != 200:
+            return False, f"Get design failed: {resp.status_code} - {resp.text[:300]}", None
+
+        data = resp.json()
+        design = data.get("design", {})
+
+        edit_url = None
+        urls = design.get("urls", {})
+        if isinstance(urls, dict):
+            edit_url = urls.get("edit_url") or urls.get("edit")
+
+        if not edit_url:
+            # fallback if Canva returns a different structure
+            edit_url = design.get("edit_url")
+
+        if not edit_url:
+            return False, "No edit URL returned for this design.", None
+
+        return True, "Editor URL retrieved.", edit_url
+
+    except Exception as e:
+        return False, f"Get design error: {e}", None
+
+
+def upload_video_and_open_editor(video_bytes, filename="SLC_Video.mp4"):
+    """
+    Full flow:
+    1) upload video asset
+    2) create blank design
+    3) get edit URL
+
+    Returns:
+    (success, message, result_dict)
+    """
+    ok, msg, asset_id = upload_video(video_bytes, filename)
+    if not ok:
+        return False, msg, None
+
+    title = os.path.splitext(filename)[0]
+    ok, msg, design_id = create_blank_video_design(title=title)
+    if not ok:
+        return False, msg, None
+
+    ok, msg, edit_url = get_design_edit_url(design_id)
+    if not ok:
+        return False, msg, None
+
+    return True, "Uploaded and Canva editor opened successfully.", {
+        "asset_id": asset_id,
+        "design_id": design_id,
+        "edit_url": edit_url,
+    }
 
 
 def disconnect():
     """Clear Canva session tokens."""
-    for key in ["canva_access_token", "canva_refresh_token",
-                "canva_token_expiry", "canva_code_verifier", "canva_auth_state"]:
+    for key in [
+        "canva_access_token",
+        "canva_refresh_token",
+        "canva_token_expiry",
+        "canva_code_verifier",
+        "canva_auth_state",
+    ]:
         st.session_state.pop(key, None)

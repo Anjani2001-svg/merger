@@ -14,17 +14,15 @@ from urllib.parse import urlencode
 import requests
 import streamlit as st
 
-# ── Canva API endpoints ──
-CANVA_AUTH_URL        = "https://www.canva.com/api/oauth/authorize"
-CANVA_TOKEN_URL       = "https://api.canva.com/rest/v1/oauth/token"
-CANVA_UPLOAD_URL      = "https://api.canva.com/rest/v1/asset-uploads"
-CANVA_UPLOAD_JOB_URL  = "https://api.canva.com/rest/v1/asset-uploads/{job_id}"
-CANVA_CREATE_DESIGN   = "https://api.canva.com/rest/v1/designs"
-CANVA_GET_DESIGN      = "https://api.canva.com/rest/v1/designs/{design_id}"
+CANVA_AUTH_URL = "https://www.canva.com/api/oauth/authorize"
+CANVA_TOKEN_URL = "https://api.canva.com/rest/v1/oauth/token"
+CANVA_UPLOAD_URL = "https://api.canva.com/rest/v1/asset-uploads"
+CANVA_UPLOAD_JOB_URL = "https://api.canva.com/rest/v1/asset-uploads/{job_id}"
+CANVA_CREATE_DESIGN = "https://api.canva.com/rest/v1/designs"
+CANVA_GET_DESIGN = "https://api.canva.com/rest/v1/designs/{design_id}"
 
 
 def _get_credentials():
-    """Get Canva Client ID and Secret from Streamlit secrets or env."""
     cid = None
     sec = None
 
@@ -43,18 +41,15 @@ def _get_credentials():
 
 
 def is_configured():
-    """Check if Canva API credentials are set."""
     cid, sec = _get_credentials()
     return bool(cid and sec)
 
 
 def is_connected():
-    """Check if user has a valid Canva access token."""
     return bool(st.session_state.get("canva_access_token"))
 
 
 def _generate_pkce():
-    """Generate PKCE code_verifier and code_challenge."""
     verifier = secrets.token_urlsafe(64)[:128]
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
@@ -62,7 +57,6 @@ def _generate_pkce():
 
 
 def get_redirect_uri():
-    """Build the redirect URI for the current Streamlit app."""
     try:
         uri = st.secrets.get("CANVA_REDIRECT_URI", None)
         if uri:
@@ -74,7 +68,6 @@ def get_redirect_uri():
 
 
 def start_auth_flow():
-    """Generate the Canva authorization URL and store PKCE state."""
     cid, _ = _get_credentials()
     verifier, challenge = _generate_pkce()
     state = secrets.token_urlsafe(32)
@@ -84,23 +77,6 @@ def start_auth_flow():
 
     redirect_uri = get_redirect_uri()
 
-<<<<<<< HEAD
-    # Build URL manually — Canva needs literal colons in scopes
-    scope_encoded = quote("asset:write asset:read", safe=":") 
-    redirect_encoded = quote(redirect_uri, safe="")
-
-    url = (
-        f"{CANVA_AUTH_URL}"
-        f"?code_challenge={challenge}"
-        f"&code_challenge_method=S256"
-        f"&scope={scope_encoded}"
-        f"&response_type=code"
-        f"&client_id={cid}"
-        f"&state={state}"
-        f"&redirect_uri={redirect_encoded}"
-    )
-    return url
-=======
     params = {
         "code_challenge": challenge,
         "code_challenge_method": "s256",
@@ -111,11 +87,9 @@ def start_auth_flow():
         "redirect_uri": redirect_uri,
     }
     return CANVA_AUTH_URL + "?" + urlencode(params)
->>>>>>> f11d4092f36251ede1d66e4b8a8620eec907967b
 
 
 def handle_callback(query_params):
-    """Exchange the auth code from Canva callback for an access token."""
     code = query_params.get("code", [None])
     state = query_params.get("state", [None])
 
@@ -172,7 +146,6 @@ def handle_callback(query_params):
 
 
 def refresh_token_if_needed():
-    """Refresh access token if close to expiry."""
     expiry = st.session_state.get("canva_token_expiry", 0)
     if time.time() < expiry - 300:
         return True
@@ -210,16 +183,7 @@ def refresh_token_if_needed():
     return False
 
 
-def _auth_headers():
-    token = st.session_state.get("canva_access_token", "")
-    return {"Authorization": f"Bearer {token}"}
-
-
 def upload_video(video_bytes, filename="SLC_Video.mp4"):
-    """
-    Upload a video to the user's Canva uploads library.
-    Returns: (success, message, asset_id)
-    """
     if not refresh_token_if_needed():
         return False, "Canva token expired. Please reconnect.", None
 
@@ -279,10 +243,6 @@ def upload_video(video_bytes, filename="SLC_Video.mp4"):
 
 
 def create_blank_video_design(title="SLC Video Edit"):
-    """
-    Create a blank Canva design and return its design_id.
-    Returns: (success, message, design_id)
-    """
     if not refresh_token_if_needed():
         return False, "Canva token expired. Please reconnect.", None
 
@@ -290,7 +250,6 @@ def create_blank_video_design(title="SLC Video Edit"):
     if not token:
         return False, "Not connected to Canva.", None
 
-    # Safer option: use custom size 1920x1080
     body = {
         "design_type": {
             "type": "custom",
@@ -327,10 +286,6 @@ def create_blank_video_design(title="SLC Video Edit"):
 
 
 def get_design_edit_url(design_id):
-    """
-    Get the Canva editor URL for a design.
-    Returns: (success, message, edit_url)
-    """
     if not refresh_token_if_needed():
         return False, "Canva token expired. Please reconnect.", None
 
@@ -350,15 +305,8 @@ def get_design_edit_url(design_id):
 
         data = resp.json()
         design = data.get("design", {})
-
-        edit_url = None
-        urls = design.get("urls", {})
-        if isinstance(urls, dict):
-            edit_url = urls.get("edit_url") or urls.get("edit")
-
-        if not edit_url:
-            # fallback if Canva returns a different structure
-            edit_url = design.get("edit_url")
+        urls = design.get("urls", {}) if isinstance(design.get("urls", {}), dict) else {}
+        edit_url = urls.get("edit_url") or urls.get("edit") or design.get("edit_url")
 
         if not edit_url:
             return False, "No edit URL returned for this design.", None
@@ -370,15 +318,6 @@ def get_design_edit_url(design_id):
 
 
 def upload_video_and_open_editor(video_bytes, filename="SLC_Video.mp4"):
-    """
-    Full flow:
-    1) upload video asset
-    2) create blank design
-    3) get edit URL
-
-    Returns:
-    (success, message, result_dict)
-    """
     ok, msg, asset_id = upload_video(video_bytes, filename)
     if not ok:
         return False, msg, None
@@ -400,7 +339,6 @@ def upload_video_and_open_editor(video_bytes, filename="SLC_Video.mp4"):
 
 
 def disconnect():
-    """Clear Canva session tokens."""
     for key in [
         "canva_access_token",
         "canva_refresh_token",

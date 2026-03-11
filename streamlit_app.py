@@ -518,8 +518,8 @@ if st.button("🎬  Merge & Download", type="primary", use_container_width=True)
                         else:
                             st.error(msg_text)
                 else:
-                    # Fallback: deep link to Canva video editor
-                    canva_url = "https://www.canva.com/design/create/video?width=1920&height=1080"
+                    # Fallback: link to Canva video creator
+                    canva_url = "https://www.canva.com/create/videos/"
                     st.link_button("🎨  Edit in Canva", canva_url,
                                    use_container_width=True)
 

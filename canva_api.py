@@ -4,6 +4,7 @@ OAuth 2.0 with PKCE + Asset Upload for video files.
 """
 
 import os, hashlib, secrets, base64, time, json
+from urllib.parse import urlencode, quote
 import requests
 import streamlit as st
 
@@ -87,7 +88,7 @@ def start_auth_flow():
         "state":                 state,
         "redirect_uri":          redirect_uri,
     }
-    url = CANVA_AUTH_URL + "?" + "&".join(f"{k}={v}" for k, v in params.items())
+    url = CANVA_AUTH_URL + "?" + urlencode(params)
     return url
 
 

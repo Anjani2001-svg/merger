@@ -79,16 +79,20 @@ def start_auth_flow():
 
     redirect_uri = get_redirect_uri()
 
-    params = {
-        "code_challenge":        challenge,
-        "code_challenge_method": "s256",
-        "scope":                 "asset:write asset:read",
-        "response_type":         "code",
-        "client_id":             cid,
-        "state":                 state,
-        "redirect_uri":          redirect_uri,
-    }
-    url = CANVA_AUTH_URL + "?" + urlencode(params)
+    # Build URL manually — Canva needs literal colons in scopes
+    scope_encoded = quote("asset:write asset:read", safe=":") 
+    redirect_encoded = quote(redirect_uri, safe="")
+
+    url = (
+        f"{CANVA_AUTH_URL}"
+        f"?code_challenge={challenge}"
+        f"&code_challenge_method=S256"
+        f"&scope={scope_encoded}"
+        f"&response_type=code"
+        f"&client_id={cid}"
+        f"&state={state}"
+        f"&redirect_uri={redirect_encoded}"
+    )
     return url
 
 

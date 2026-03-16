@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 SLC Video Merger – Streamlit Edition
-All text is rendered by Pillow.
-FFmpeg handles overlay, normalisation, and concatenation.
+All text is rendered by Pillow (no FFmpeg drawtext = no escaping bugs).
+FFmpeg only does: overlay PNG on video, normalise, transitions, concatenate.
 """
 
 import os
@@ -15,7 +15,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image, ImageDraw, ImageFont
 import streamlit as st
-import canva_api
 
 # ────────────────────────────── CONFIG ──────────────────────────────────
 st.set_page_config(page_title="SLC Video Merger", page_icon="🎬", layout="wide")
@@ -23,7 +22,7 @@ st.set_page_config(page_title="SLC Video Merger", page_icon="🎬", layout="wide
 BASE_DIR = Path(__file__).parent
 INTRO_TPL = BASE_DIR / "assets" / "intro_template.mp4"
 
-# Fonts – check bundled first, then system
+
 def _font(name):
     candidates = [
         str(BASE_DIR / "fonts" / name),
@@ -35,11 +34,13 @@ def _font(name):
             return c
     return None
 
+
 BOLD = _font("Poppins-Bold.ttf")
 MEDIUM = _font("Poppins-Medium.ttf")
 
 TEAL = (96, 204, 190)
 WHITE = (255, 255, 255)
+
 
 # ──────────────────── PILLOW: RENDER TEXT AS PNG ───────────────────────
 def _ft(path, size):
@@ -53,9 +54,8 @@ def render_intro_overlay(course, unit_num, unit_title, W=1920, H=1080):
     """Return a 1920x1080 RGBA PNG with all text centered on screen."""
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    pad = W - 200  # max text width
+    pad = W - 200
 
-    # Course name font (auto-shrink to fit)
     csz = 52
     cfn = _ft(BOLD, csz)
     while csz > 28:
@@ -64,11 +64,9 @@ def render_intro_overlay(course, unit_num, unit_title, W=1920, H=1080):
             break
         csz -= 2
         cfn = _ft(BOLD, csz)
-
     c_asc, c_desc = cfn.getmetrics()
     c_h = c_asc + c_desc
 
-    # Unit number badge
     ufn = _ft(BOLD, 28)
     utxt = unit_num.upper()
     bb = draw.textbbox((0, 0), utxt, font=ufn)
@@ -76,10 +74,8 @@ def render_intro_overlay(course, unit_num, unit_title, W=1920, H=1080):
     badge_w = badge_tw + 70
     badge_h = 56
 
-    # Unit title
     has_title = bool(unit_title and unit_title.strip())
     title_h = 0
-    tfn = None
     if has_title:
         tsz = 30
         tfn = _ft(MEDIUM, tsz)
@@ -101,7 +97,6 @@ def render_intro_overlay(course, unit_num, unit_title, W=1920, H=1080):
     center_y = (H // 2) - 60
     start_y = center_y - block_h // 2
 
-    # Course
     draw.text(
         (W // 2, start_y + c_h // 2),
         course,
@@ -110,7 +105,6 @@ def render_intro_overlay(course, unit_num, unit_title, W=1920, H=1080):
         anchor="mm",
     )
 
-    # Badge
     badge_x = (W - badge_w) // 2
     badge_y = start_y + c_h + gap1
     draw.rounded_rectangle(
@@ -126,8 +120,7 @@ def render_intro_overlay(course, unit_num, unit_title, W=1920, H=1080):
         anchor="mm",
     )
 
-    # Title
-    if has_title and tfn:
+    if has_title:
         title_y = badge_y + badge_h + gap2
         draw.text(
             (W // 2, title_y + title_h // 2),
@@ -181,7 +174,6 @@ def make_intro(course, unit_num, unit_title, tmp):
     out = str(tmp / "intro.mp4")
 
     render_intro_overlay(course, unit_num, unit_title).save(png, "PNG")
-
     y = "if(lt(t\\,0.8)\\,300*pow(1-t/0.8\\,2)\\,0)"
 
     _ff([
@@ -196,7 +188,6 @@ def make_intro(course, unit_num, unit_title, tmp):
         "-r", "30", "-pix_fmt", "yuv420p",
         out,
     ], timeout=60)
-
     return Path(out)
 
 
@@ -206,7 +197,6 @@ def make_outro(tmp):
     out = str(tmp / "outro.mp4")
 
     render_end_overlay().save(png, "PNG")
-
     y = "if(lt(t\\,0.8)\\,250*pow(1-t/0.8\\,2)\\,0)"
 
     _ff([
@@ -221,14 +211,41 @@ def make_outro(tmp):
         "-r", "30", "-pix_fmt", "yuv420p",
         out,
     ], timeout=60)
-
     return Path(out)
+
+
+def _probe_duration(path):
+    r = subprocess.run([
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        str(path),
+    ], capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        raise RuntimeError(f"Could not read duration for {path}")
+    return float(r.stdout.strip())
+
+
+def _has_audio(path):
+    r = subprocess.run([
+        "ffprobe", "-v", "error",
+        "-select_streams", "a",
+        "-show_entries", "stream=index",
+        "-of", "csv=p=0",
+        str(path),
+    ], capture_output=True, text=True)
+    return bool(r.stdout.strip())
 
 
 def normalise(inp, out):
     """Scale/pad any video to 1920x1080 @ 30fps, h264+aac."""
-    _ff([
-        "ffmpeg", "-y", "-i", str(inp),
+    has_audio = _has_audio(inp)
+    cmd = ["ffmpeg", "-y", "-i", str(inp)]
+
+    if not has_audio:
+        cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+
+    cmd += [
         "-vf",
         "scale=1920:1080:force_original_aspect_ratio=decrease,"
         "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black",
@@ -236,15 +253,73 @@ def normalise(inp, out):
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
         "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
         "-pix_fmt", "yuv420p",
+    ]
+
+    if not has_audio:
+        cmd += ["-shortest"]
+
+    cmd += [str(out)]
+    _ff(cmd)
+    return Path(out)
+
+
+def add_notebooklm_transition(
+    intro,
+    main,
+    out,
+    duration=1.0,
+    direction="left",
+):
+    """Add a Canva-style 4-colour wipe before the NotebookLM segment."""
+    transition_map = {
+        "left": "wipeleft",
+        "right": "wiperight",
+        "up": "wipeup",
+        "down": "wipedown",
+    }
+    wipe = transition_map.get(direction, "wipeleft")
+    intro_d = _probe_duration(intro)
+    half = max(0.25, min(duration / 2, intro_d - 0.05))
+
+    if half <= 0:
+        raise RuntimeError("Intro is too short to apply the transition.")
+
+    color_columns = (
+        "color=c=0x7B2CBF:s=1920x1080:r=30,"
+        "drawbox=x=0:y=0:w=576:h=1080:color=0x7B2CBF:t=fill,"
+        "drawbox=x=576:y=0:w=461:h=1080:color=0x4285F4:t=fill,"
+        "drawbox=x=1037:y=0:w=346:h=1080:color=0x7EDFC3:t=fill,"
+        "drawbox=x=1383:y=0:w=537:h=1080:color=0xB7E4C7:t=fill"
+    )
+
+    _ff([
+        "ffmpeg", "-y",
+        "-i", str(intro),
+        "-i", str(main),
+        "-f", "lavfi", "-t", f"{duration}", "-i", color_columns,
+        "-f", "lavfi", "-t", f"{duration}", "-i", "anullsrc=r=48000:cl=stereo",
+        "-filter_complex",
+        "[0:v]fps=30,format=yuv420p,settb=AVTB[v0];"
+        "[1:v]fps=30,format=yuv420p,settb=AVTB[v1];"
+        "[2:v]fps=30,format=yuv420p,settb=AVTB[vc];"
+        f"[v0][vc]xfade=transition={wipe}:duration={half}:offset={max(intro_d - half, 0):.3f}[vx];"
+        f"[vx][v1]xfade=transition={wipe}:duration={half}:offset={intro_d:.3f}[vout];"
+        f"[0:a][3:a]acrossfade=d={half}:c1=tri:c2=tri[ax];"
+        f"[ax][1:a]acrossfade=d={half}:c1=tri:c2=tri[aout]",
+        "-map", "[vout]", "-map", "[aout]",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+        "-r", "30", "-pix_fmt", "yuv420p",
         str(out),
-    ])
+    ], timeout=180)
+
     return Path(out)
 
 
 def concat(parts, out, tmp):
-    """Concatenate videos via demuxer; fallback to re-encode."""
+    """Concatenate videos via demuxer (fast copy, fallback re-encode)."""
     lst = tmp / "list.txt"
-    with open(lst, "w", encoding="utf-8") as f:
+    with open(lst, "w") as f:
         for p in parts:
             f.write(f"file '{Path(p).resolve()}'\n")
 
@@ -270,13 +345,14 @@ def preview_frame(course, unit_num, unit_title):
     if not INTRO_TPL.exists():
         raise FileNotFoundError(
             f"Intro template not found at: {INTRO_TPL}\n"
-            f"Make sure assets/intro_template.mp4 exists."
+            f"Make sure assets/intro_template.mp4 is in your repo."
         )
 
     if INTRO_TPL.stat().st_size < 1000:
         raise ValueError(
-            f"Intro template is too small ({INTRO_TPL.stat().st_size} bytes). "
-            "File may be corrupted or a Git LFS pointer."
+            f"Intro template is too small ({INTRO_TPL.stat().st_size} bytes) — "
+            f"file may be corrupted or is a Git LFS pointer. "
+            f"Re-upload the actual .mp4 file to GitHub."
         )
 
     tmp_path = None
@@ -286,9 +362,7 @@ def preview_frame(course, unit_num, unit_title):
 
         result = subprocess.run(
             ["ffmpeg", "-y", "-i", str(INTRO_TPL), "-ss", "3", "-vframes", "1", tmp_path],
-            capture_output=True,
-            text=True,
-            timeout=10,
+            capture_output=True, text=True, timeout=10
         )
 
         if result.returncode != 0:
@@ -296,7 +370,7 @@ def preview_frame(course, unit_num, unit_title):
 
         if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) < 100:
             raise RuntimeError(
-                "FFmpeg produced an empty frame. Template may be corrupt.\n"
+                f"FFmpeg produced empty frame. Template may be corrupt.\n"
                 f"Template path: {INTRO_TPL}\n"
                 f"Template size: {INTRO_TPL.stat().st_size} bytes\n"
                 f"FFmpeg stderr: {result.stderr[-300:]}"
@@ -304,6 +378,7 @@ def preview_frame(course, unit_num, unit_title):
 
         bg = Image.open(tmp_path).convert("RGBA")
         bg.load()
+
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:
@@ -322,94 +397,32 @@ def preview_frame(course, unit_num, unit_title):
 
 # ── Startup check ──
 def _check_template():
-    """Verify intro template on startup and show warnings."""
     if not INTRO_TPL.exists():
         st.error(
-            f"❌ **Intro template not found**\n\n"
+            f"❌ **Intro template not found!**\n\n"
             f"Expected: `{INTRO_TPL}`\n\n"
-            f"Make sure `assets/intro_template.mp4` is in your repo."
+            f"Make sure `assets/intro_template.mp4` is committed to your repo."
         )
         st.stop()
 
     size = INTRO_TPL.stat().st_size
     if size < 10000:
         st.error(
-            f"❌ **Intro template appears corrupt**\n\n"
-            f"File size: {size} bytes\n\n"
-            f"This often means it is a Git LFS pointer or the upload failed."
+            f"❌ **Intro template appears corrupt!**\n\n"
+            f"File size: {size} bytes (expected ~950KB)\n\n"
+            f"This usually means the uploaded file is not the real MP4."
         )
         st.stop()
 
 
 _check_template()
 
-# ──────────────────── CANVA OAUTH CALLBACK ─────────────────────────────
-qp = st.query_params
-if "code" in qp and canva_api.is_configured():
-    with st.spinner("Connecting to Canva..."):
-        success = canva_api.handle_callback(qp)
-        if success:
-            st.success("✅ Connected to Canva!")
-        else:
-            st.error("Could not connect to Canva.")
-    st.query_params.clear()
-    st.rerun()
-
-# ──────────────────── SIDEBAR: CANVA CONNECTION ────────────────────────
-with st.sidebar:
-    st.markdown("### 🎨 Canva Integration")
-
-    if not canva_api.is_configured():
-        st.markdown("""
-        <div style="background:rgba(255,165,0,.08);border:1px solid rgba(255,165,0,.25);
-                    border-radius:10px;padding:14px;font-size:12px;color:rgba(255,255,255,.6)">
-            <b style="color:#ffa500">Setup Required</b><br><br>
-            To enable direct upload to Canva:<br><br>
-            <b>1.</b> Go to Canva Developer Portal<br>
-            <b>2.</b> Create an integration<br>
-            <b>3.</b> Set scopes:
-            <code>asset:write</code>,
-            <code>asset:read</code>,
-            <code>design:write</code>,
-            <code>design:read</code><br>
-            <b>4.</b> Set redirect URL to your app URL<br>
-            <b>5.</b> Add to <code>.streamlit/secrets.toml</code>:<br><br>
-            <code style="font-size:11px">
-            CANVA_CLIENT_ID = "your_id"<br>
-            CANVA_CLIENT_SECRET = "your_secret"<br>
-            CANVA_REDIRECT_URI = "your_app_url"
-            </code>
-        </div>
-        """, unsafe_allow_html=True)
-
-    elif canva_api.is_connected():
-        st.markdown(
-            '<div style="background:rgba(96,204,190,.1);border:1px solid rgba(96,204,190,.3);'
-            'border-radius:10px;padding:12px;text-align:center">'
-            '<span style="color:#60ccbe;font-weight:600">✅ Connected to Canva</span></div>',
-            unsafe_allow_html=True,
-        )
-        if st.button("Disconnect from Canva", use_container_width=True):
-            canva_api.disconnect()
-            st.rerun()
-
-    else:
-        st.markdown(
-            '<p style="font-size:12px;color:rgba(255,255,255,.5)">'
-            'Connect your Canva account to upload videos directly and open a Canva design.</p>',
-            unsafe_allow_html=True,
-        )
-        auth_url = canva_api.start_auth_flow()
-        st.link_button("🔗 Connect to Canva", auth_url, use_container_width=True)
-
-    st.markdown("---")
 
 # ──────────────────────── CUSTOM CSS ──────────────────────────────────
 st.markdown("""
 <style>
 .stApp{background:linear-gradient(135deg,#0a2a3c 0%,#0d3b54 30%,#0f4c6e 60%,#1a3a5c 100%)}
 header[data-testid="stHeader"]{background:rgba(10,42,60,.85);backdrop-filter:blur(10px)}
-section[data-testid="stSidebar"]{background:rgba(10,42,60,.95);border-right:1px solid rgba(96,204,190,.2)}
 .stButton>button[kind="primary"],.stDownloadButton>button{background:#60ccbe!important;color:#0a2a3c!important;border:none!important;border-radius:12px!important;font-weight:600!important;padding:.6rem 2rem!important}
 .stButton>button[kind="primary"]:hover,.stDownloadButton>button:hover{background:#4dbcad!important;box-shadow:0 4px 20px rgba(96,204,190,.3)!important}
 .stTextInput>div>div>input{background:rgba(255,255,255,.08)!important;border:1px solid rgba(255,255,255,.15)!important;border-radius:10px!important;color:#fff!important}
@@ -422,11 +435,10 @@ section[data-testid="stFileUploader"]{border:2px dashed rgba(96,204,190,.4)!impo
 .ok{text-align:center;padding:24px;background:rgba(96,204,190,.08);border:1px solid rgba(96,204,190,.25);border-radius:16px;margin:16px 0}
 .ok h3{color:#60ccbe;margin-bottom:4px}
 hr{border-color:rgba(96,204,190,.15)!important}
-.stLinkButton>a{background:rgba(255,255,255,.1)!important;color:#fff!important;border:1px solid rgba(96,204,190,.4)!important;border-radius:12px!important;font-weight:600!important;padding:.6rem 2rem!important;text-decoration:none!important}
-.stLinkButton>a:hover{background:rgba(96,204,190,.15)!important;border-color:#60ccbe!important}
 video{border-radius:12px;border:1px solid rgba(96,204,190,.2)}
 </style>
 """, unsafe_allow_html=True)
+
 
 # ──────────────────────── LAYOUT ──────────────────────────────────────
 st.markdown("""
@@ -440,6 +452,7 @@ padding:3px 12px;border-radius:20px;text-transform:uppercase">Fast</span>
 st.markdown("""
 <div style="text-align:center;margin:8px 0 24px">
 <span class="fb">🎬 Custom Intro</span><span class="fa">→</span>
+<span class="fb">🟪🟦🟩⬜ 4-Colour Transition</span><span class="fa">→</span>
 <span class="fb">📹 NotebookLM Video</span><span class="fa">→</span>
 <span class="fb">🔚 Outro</span>
 </div>
@@ -459,7 +472,6 @@ with c1:
         "Unit / Chapter Number",
         placeholder="e.g. UNIT 03 | CHAPTER 06"
     )
-
 with c2:
     unit_title = st.text_input(
         "Unit Title (optional)",
@@ -468,11 +480,11 @@ with c2:
 
 if st.button("👁 Preview Intro", type="secondary"):
     if course_name and unit_number:
-        with st.spinner("Rendering preview..."):
+        with st.spinner("Rendering…"):
             st.image(
                 preview_frame(course_name, unit_number, unit_title or ""),
                 caption="Intro Preview",
-                use_container_width=True,
+                use_container_width=True
             )
     else:
         st.warning("Enter course name and unit number first.")
@@ -485,7 +497,7 @@ st.markdown('<div><span class="sn">2</span><span class="st">Upload NotebookLM Vi
 vid = st.file_uploader(
     "Upload your NotebookLM video",
     type=["mp4", "mov", "webm", "avi", "mkv"],
-    help="MP4 / MOV / WebM / AVI / MKV",
+    help="MP4 / MOV / WebM — up to 500 MB"
 )
 
 if vid:
@@ -497,17 +509,19 @@ st.markdown("---")
 st.markdown('<div><span class="sn">3</span><span class="st">Generate Final Video</span></div>', unsafe_allow_html=True)
 st.markdown(
     '<p style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:16px">'
-    'Merges custom intro + uploaded video + standard outro.</p>',
-    unsafe_allow_html=True,
+    'Merges custom intro + 4-colour Canva-style transition + uploaded video + standard outro.</p>',
+    unsafe_allow_html=True
 )
 
 if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
     if not course_name:
         st.error("Enter a course name.")
         st.stop()
+
     if not unit_number:
         st.error("Enter a unit number.")
         st.stop()
+
     if not vid:
         st.error("Upload a video.")
         st.stop()
@@ -516,15 +530,15 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
 
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        bar = st.progress(0, "Starting...")
+        bar = st.progress(0, "Starting…")
         msg = st.empty()
 
         try:
             raw = tmp / "raw.mp4"
             raw.write_bytes(vid.getvalue())
 
-            msg.info("⏳ **Step 1 / 2** — Building intro, outro, and normalising video...")
-            bar.progress(15, "Processing...")
+            msg.info("⏳ **Step 1 / 3** — Building intro, outro and normalising video…")
+            bar.progress(15, "Processing in parallel…")
 
             results = {}
             errors = {}
@@ -543,13 +557,22 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
             if errors:
                 raise RuntimeError("; ".join(f"{k}: {v}" for k, v in errors.items()))
 
-            bar.progress(75, "Merging...")
-            msg.info("⏳ **Step 2 / 2** — Merging segments...")
+            msg.info("⏳ **Step 2 / 3** — Adding 4-colour transition before the NotebookLM video…")
+            bar.progress(70, "Creating transition…")
+
+            main_with_transition = add_notebooklm_transition(
+                results["intro"],
+                results["norm"],
+                tmp / "intro_and_main.mp4",
+            )
+
+            msg.info("⏳ **Step 3 / 3** — Merging final segments…")
+            bar.progress(85, "Merging final segments…")
 
             final = concat(
-                [results["intro"], results["norm"], results["outro"]],
+                [main_with_transition, results["outro"]],
                 tmp / "final.mp4",
-                tmp,
+                tmp
             )
 
             bar.progress(100, "Done!")
@@ -563,17 +586,17 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
 
             st.markdown(f"""
             <div class="ok">
-            <div style="font-size:48px;margin-bottom:8px">✅</div>
-            <h3>Video Ready!</h3>
-            <p style="color:rgba(255,255,255,.5);font-size:13px">
-            Processed in {secs:.1f}s &nbsp;•&nbsp; {mb:.1f} MB</p>
+                <div style="font-size:48px;margin-bottom:8px">✅</div>
+                <h3>Video Ready!</h3>
+                <p style="color:rgba(255,255,255,.5);font-size:13px">
+                    Processed in {secs:.1f}s &nbsp;•&nbsp; {mb:.1f} MB
+                </p>
             </div>
             """, unsafe_allow_html=True)
 
             st.markdown(
-                '<div style="margin:16px 0"><span class="sn">▶</span>'
-                '<span class="st">Preview</span></div>',
-                unsafe_allow_html=True,
+                '<div style="margin:16px 0"><span class="sn">▶</span><span class="st">Preview</span></div>',
+                unsafe_allow_html=True
             )
             st.video(data, format="video/mp4")
 
@@ -581,66 +604,13 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
             safeu = unit_number.replace(" ", "_").replace("|", "")
             filename = f"SLC_Video_{safec}_{safeu}.mp4"
 
-            st.session_state["final_video"] = data
-            st.session_state["final_filename"] = filename
-
-            bcol1, bcol2 = st.columns(2)
-
-            with bcol1:
-                st.download_button(
-                    "⬇ Download Final Video",
-                    data,
-                    filename,
-                    "video/mp4",
-                    use_container_width=True,
-                )
-
-            with bcol2:
-                if canva_api.is_connected():
-                    if st.button("🎨 Upload & Open in Canva", use_container_width=True, type="primary"):
-                        with st.spinner("Uploading to Canva and creating editor project..."):
-                            ok, msg_text, result = canva_api.upload_video_and_open_editor(data, filename)
-
-                        if ok:
-                            st.success("✅ " + msg_text)
-
-                            st.link_button(
-                                "🚀 Open Canva Editor",
-                                result["edit_url"],
-                                use_container_width=True,
-                            )
-
-                            st.markdown(
-                                '<p style="font-size:12px;color:rgba(255,255,255,.5);text-align:center">'
-                                'Your video was uploaded to Canva. In the editor, open Uploads and add the video to the timeline.</p>',
-                                unsafe_allow_html=True,
-                            )
-
-                            with st.expander("Canva details"):
-                                st.write("Asset ID:", result["asset_id"])
-                                st.write("Design ID:", result["design_id"])
-                        else:
-                            st.error(msg_text)
-                else:
-                    st.link_button(
-                        "🎨 Edit in Canva",
-                        "https://www.canva.com/create/videos/",
-                        use_container_width=True,
-                    )
-
-            if not canva_api.is_connected():
-                st.markdown("""
-                <div style="background:rgba(96,204,190,.06);border:1px solid rgba(96,204,190,.15);
-                            border-radius:12px;padding:16px 20px;margin-top:12px">
-                    <p style="font-size:13px;font-weight:600;color:#60ccbe;margin:0 0 8px">
-                        💡 Want direct upload to Canva?</p>
-                    <p style="font-size:12px;color:rgba(255,255,255,.5);margin:0;line-height:1.8">
-                        Connect your Canva account in the sidebar to upload videos directly
-                        and open a Canva editor project.<br>
-                        The uploaded video will appear in Canva Uploads.
-                    </p>
-                </div>
-                """, unsafe_allow_html=True)
+            st.download_button(
+                "⬇ Download Final Video",
+                data,
+                filename,
+                "video/mp4",
+                use_container_width=True
+            )
 
         except Exception as e:
             bar.empty()

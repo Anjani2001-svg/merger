@@ -472,17 +472,12 @@ with c1:
         "Unit / Chapter Number",
         placeholder="e.g. UNIT 03 | CHAPTER 06"
     )
-with c2:
-    unit_title = st.text_input(
-        "Unit Title (optional)",
-        placeholder="e.g. Sports Coaching Principles"
-    )
 
 if st.button("👁 Preview Intro", type="secondary"):
     if course_name and unit_number:
         with st.spinner("Rendering…"):
             st.image(
-                preview_frame(course_name, unit_number, unit_title or ""),
+                preview_frame(course_name, unit_number, ""),
                 caption="Intro Preview",
                 use_container_width=True
             )
@@ -550,7 +545,7 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
                     errors[name] = e
 
             with ThreadPoolExecutor(max_workers=3) as pool:
-                pool.submit(_job, "intro", make_intro, course_name, unit_number, unit_title or "", tmp)
+                pool.submit(_job, "intro", make_intro, course_name, unit_number, "", tmp)
                 pool.submit(_job, "outro", make_outro, tmp)
                 pool.submit(_job, "norm", normalise, raw, tmp / "norm.mp4")
 

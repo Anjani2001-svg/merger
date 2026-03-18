@@ -5,14 +5,20 @@ All text is rendered by Pillow (no FFmpeg drawtext = no escaping bugs).
 FFmpeg only does: overlay PNG on video, normalise, transitions, concatenate.
 
 NotebookLM watermark zones covered:
-  1. Top-centre  (title slides, always)       x=810  y=148  w=280  h=55
-                                               → white box
-  2. Bottom-right badge (content slides, always) x=1498 y=882  w=265  h=100
-                                               → white box + SLC logo (always)
-  3. End-card centre (last ~12 s)             x=508  y=400  w=903  h=229
-                                               → white box (hides notebooklm.google.com)
-                                                 SLC logo still sits bottom-right
-                                                 (same position as zone 2, same size)
+  1. Top-centre  (title slide only, first 20s)   x=810  y=148  w=280  h=55
+                                                  → white box, time-gated
+  2. Bottom-right badge (content slides, always)  defined by WM_BR_* constants
+                                                  → white box + SLC logo on top
+  3. End-card centre (last ~12 s)                x=508  y=400  w=903  h=229
+                                                  → white box; SLC logo still
+                                                    bottom-right (same as zone 2)
+
+FIX NOTES vs previous version:
+  - WM_TOP was firing on ALL frames, covering content on slides that have no
+    top watermark. Now gated to the first 20 seconds only (title slide).
+  - WM_BR (white box) and the SLC logo overlay were in two different positions
+    (y=882 vs y=997), leaving a visible white gap. Now both are derived from
+    the same WM_BR_* constants so the logo sits exactly over the white box.
 """
 
 import os
@@ -35,14 +41,26 @@ INTRO_TPL = BASE_DIR / "assets" / "intro_template.mp4"
 # Place your SLC logo PNG here, OR upload it in the Streamlit UI below.
 SLC_LOGO = BASE_DIR / "assets" / "slc_logo.png"
 
-# Logo display size (pixels) — matches the bottom-right watermark zone
-LOGO_W, LOGO_H = 120, 63
+# ── NotebookLM bottom-right badge — measured position in 1920×1080 ────
+# These four values define both the white cover box AND the logo position.
+# If the badge moves in a future NotebookLM update, change only these.
+WM_BR_X = 1518   # left edge of the badge
+WM_BR_Y = 905    # top edge of the badge
+WM_BR_W = 225    # width  (covers icon + "NotebookLM" text)
+WM_BR_H = 72     # height
 
-# Bottom-right position — same on every slide including the end card
-LOGO_X = 1920 - LOGO_W - 20   # = 1680  (20 px from right edge)
-LOGO_Y = 1080 - LOGO_H - 20   # = 987   (20 px from bottom edge)
+# SLC logo is centred within the badge zone (5 px inner padding each side)
+LOGO_W  = WM_BR_W - 10          # 215 px
+LOGO_H  = WM_BR_H - 10          # 62 px
+LOGO_X  = WM_BR_X + 5           # 1523 — same left edge + padding
+LOGO_Y  = WM_BR_Y + 5           # 910  — same top  edge + padding
 
-# How many seconds before the end to treat as the NotebookLM end card
+# How many seconds of the NotebookLM video have the TOP-CENTRE watermark.
+# The "NotebookLM" text at the top only appears on the title/intro slide.
+# Setting 20 s is generous; adjust down if it fires on content slides.
+WM_TOP_DURATION = 20
+
+# How many seconds before the end to treat as the full-screen end card.
 END_CARD_SECONDS = 12
 
 
@@ -74,7 +92,7 @@ def _ft(path, size):
 
 
 def render_intro_overlay(course, unit_num, unit_title, W=1920, H=1080):
-    """Return a 1920x1080 RGBA PNG with all text centred on screen."""
+    """Return a 1920×1080 RGBA PNG with all text centred on screen."""
     img  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     pad  = W - 200
@@ -237,7 +255,7 @@ def _has_audio(path):
 
 
 def normalise(inp, out):
-    """Scale/pad any video to 1920x1080 @ 30 fps, h264+aac."""
+    """Scale/pad any video to 1920×1080 @ 30 fps, h264+aac."""
     has_audio = _has_audio(inp)
     cmd = ["ffmpeg", "-y", "-i", str(inp)]
 
@@ -264,20 +282,21 @@ def normalise(inp, out):
 
 def remove_notebooklm_watermark(inp, out):
     """
-    Cover all NotebookLM branding in a single FFmpeg pass.
+    Cover all NotebookLM branding in one FFmpeg pass.
 
-    Without SLC logo:
-      - Zone 1 (top-centre, always):      white box
-      - Zone 2 (bottom-right, always):    white box
-      - Zone 3 (end-card centre, last 12s): white box
+    Zone 1 — Top-centre (title slide only, first WM_TOP_DURATION seconds):
+        White box, time-gated. This ONLY fires during the opening title slide
+        where the "NotebookLM" text appears at the top. Without the time gate
+        it would cover content on later slides that have no top watermark.
 
-    With SLC logo (assets/slc_logo.png present):
-      - Zone 1:  white box                         (logo not needed here)
-      - Zone 2:  white box + SLC logo bottom-right (always, all slides)
-      - Zone 3:  white box over centre             (hides notebooklm.google.com)
-                 SLC logo still sits bottom-right  (same position as Zone 2)
-      This makes every slide — including the end card — look like the
-      screenshot: clean bottom-right SLC branding, nothing else.
+    Zone 2 — Bottom-right badge (all content slides, always):
+        White box at WM_BR_* position covers the badge.
+        SLC logo overlaid at LOGO_* position — derived from the SAME constants,
+        so logo sits exactly over the white box with 5 px padding each side.
+
+    Zone 3 — End-card full-screen branding (last END_CARD_SECONDS):
+        White box covers the centred notebooklm.google.com icon + URL.
+        SLC logo remains bottom-right (same as Zone 2 — no change needed).
     """
     inp_str = str(inp)
     out_str = str(out)
@@ -286,10 +305,20 @@ def remove_notebooklm_watermark(inp, out):
     ecs       = max(0.0, total - END_CARD_SECONDS)
     enable_ec = f"gte(t\\,{ecs:.3f})"
 
-    # ── Drawbox filters ────────────────────────────────────────────────
-    WM_TOP = "drawbox=x=810:y=148:w=280:h=55:color=white@1:t=fill"
-    WM_BR  = "drawbox=x=1498:y=882:w=265:h=100:color=white@1:t=fill"
-    WM_EC  = (
+    # ── FIX 1: WM_TOP is time-gated (title slide only) ────────────────
+    WM_TOP = (
+        f"drawbox=x=810:y=148:w=280:h=55"
+        f":color=white@1:t=fill:enable='lte(t\\,{WM_TOP_DURATION})'"
+    )
+
+    # ── FIX 2: WM_BR uses the shared WM_BR_* constants ────────────────
+    WM_BR = (
+        f"drawbox=x={WM_BR_X}:y={WM_BR_Y}:w={WM_BR_W}:h={WM_BR_H}"
+        f":color=white@1:t=fill"
+    )
+
+    # End-card centre cover (time-gated to last END_CARD_SECONDS)
+    WM_EC = (
         f"drawbox=x=508:y=400:w=903:h=229"
         f":color=white@1:t=fill:enable='{enable_ec}'"
     )
@@ -297,14 +326,13 @@ def remove_notebooklm_watermark(inp, out):
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
     if use_logo:
-        # ── Logo overlaid bottom-right on EVERY frame (all slides + end card) ──
-        # The logo replaces the NotebookLM badge in the same corner, same size.
+        # Logo centred within the white box — LOGO_* derived from WM_BR_*
+        # (see constants at top of file). Applied to every frame.
         filter_complex = (
             f"[0:v]{WM_TOP},{WM_BR},{WM_EC}[cov];"
             f"[1:v]scale={LOGO_W}:{LOGO_H}[logo];"
             f"[cov][logo]overlay=x={LOGO_X}:y={LOGO_Y}[vout]"
         )
-
         cmd = [
             "ffmpeg", "-y",
             "-i", inp_str,
@@ -317,7 +345,6 @@ def remove_notebooklm_watermark(inp, out):
             out_str,
         ]
     else:
-        # ── No logo — white boxes only ─────────────────────────────────
         cmd = [
             "ffmpeg", "-y",
             "-i", inp_str,
@@ -560,9 +587,9 @@ st.markdown(
 )
 st.markdown(
     '<p style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:10px">'
-    'Upload the SLC logo PNG. It will appear in the <strong>bottom-right corner '
-    'on every slide</strong> (including the end card) — exactly where the '
-    'NotebookLM badge sits. If skipped, plain white boxes are used.</p>',
+    'Upload the SLC logo PNG. It replaces the NotebookLM badge in the '
+    '<strong>bottom-right corner on every slide</strong> including the end card. '
+    'If skipped, plain white boxes are used instead.</p>',
     unsafe_allow_html=True,
 )
 
@@ -640,7 +667,7 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
                     "; ".join(f"{k}: {v}" for k, v in errors.items())
                 )
 
-            # ── Step 2: remove all NotebookLM watermarks ──────────────
+            # ── Step 2: replace all NotebookLM branding ───────────────
             msg.info(
                 "⏳ **Step 2 / 4** — Replacing NotebookLM branding with SLC logo…"
             )

@@ -61,7 +61,7 @@ LOGO_Y  = WM_BR_Y + 5           # 910  — same top  edge + padding
 WM_TOP_DURATION = 20
 
 # How many seconds before the end to treat as the full-screen end card.
-END_CARD_SECONDS = 8
+END_CARD_SECONDS = 6
 
 
 def _font(name):

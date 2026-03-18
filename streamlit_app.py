@@ -5,10 +5,9 @@ All text is rendered by Pillow (no FFmpeg drawtext = no escaping bugs).
 FFmpeg only does: overlay PNG on video, normalise, transitions, concatenate.
 
 NotebookLM watermark zones covered:
-  1. Top-centre  (title slide only, first 20s)      x=810  y=148  w=280  h=55
-  2. Bottom-right badge (all content slides)         WM_BR_* constants
-  3. End-card full-screen branding                   x=448  y=350  w=1024 h=360
-     Start time detected dynamically per video — never fires early on last slide.
+  1. Top-centre  (title slide only, first 20s)   x=810  y=148  w=280  h=55
+  2. Bottom-right badge (all content slides)      WM_BR_* — white box + small logo
+  3. End-card full-screen branding                WM_EC_* — white box, dynamic start
 """
 
 import os
@@ -30,29 +29,30 @@ BASE_DIR  = Path(__file__).parent
 INTRO_TPL = BASE_DIR / "assets" / "intro_template.mp4"
 SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 
-# ── Bottom-right badge — measured position in 1920×1080 ────────────────
-# The background here is already near-white so NO white drawbox is used.
-# We just overlay the SLC logo directly on top of the NotebookLM badge.
-# Badge measured: x=1450-1727 (w=277), y=900-971 (h=71), centre x=1588 y=935
+# ── Zone 2: Bottom-right badge (measured from actual video frames) ──────
+# White box covers the NotebookLM badge exactly.
+# Small SLC logo is centred inside the white box.
+WM_BR_X = 1450   # left edge of badge
+WM_BR_Y = 900    # top edge of badge
+WM_BR_W = 277    # width  — covers icon + "NotebookLM" text
+WM_BR_H = 75     # height — slight extra to fully cover badge
 
-# Logo size — set to match the NotebookLM badge footprint
-LOGO_W = 160   # was 200
-LOGO_H = 44    # was 55
+# Logo — smaller than the box, centred inside it
+LOGO_W  = 140
+LOGO_H  = 39
+LOGO_X  = WM_BR_X + (WM_BR_W - LOGO_W) // 2   # centred horizontally in box
+LOGO_Y  = WM_BR_Y + (WM_BR_H - LOGO_H) // 2   # centred vertically in box
 
-# Position: centred on the badge (badge centre x=1588, y=935)
-LOGO_X = 1588 - LOGO_W // 2   # 1488
-LOGO_Y = 935  - LOGO_H // 2   # 907
-
-# ── End-card centre cover (icon + notebooklm.google.com URL) ────────────
-# Measured from actual video frames. Extra-generous padding so height
-# always covers the full text even if the URL wraps slightly differently.
+# ── Zone 3: End-card centre cover ───────────────────────────────────────
+# Covers the full notebooklm.google.com icon + URL text block.
+# Height is generous to ensure full coverage regardless of font rendering.
 WM_EC_X = 448
-WM_EC_Y = 350  # was 350 — moves box up
+WM_EC_Y = 310    # starts higher to catch icon top
 WM_EC_W = 1024
-WM_EC_H = 360    # was 229 — increased to fully cover icon + URL text
+WM_EC_H = 420    # tall enough to cover icon + URL text comfortably
 
-# ── Top-centre watermark (title slide only) ─────────────────────────────
-WM_TOP_DURATION = 20   # seconds; top bar only exists on the opening title slide
+# ── Zone 1: Top-centre (title slide only) ───────────────────────────────
+WM_TOP_DURATION = 20   # seconds — "NotebookLM" top text only on opening slide
 
 
 def _font(name):
@@ -230,22 +230,14 @@ def _has_audio(path):
 
 def _detect_end_card_start(path):
     """
-    Scan the last 20 seconds of the video frame by frame to find the EXACT
-    timestamp where the NotebookLM end card begins (the high-brightness
-    pure-white-background screen that replaces the last content slide).
-
-    Detection rule:
-      A frame is the end-card transition when overall brightness > 95%
-      (nearly all pixels are white/near-white). Content slides have lots of
-      dark text and coloured elements, so their brightness is well below this.
-
-    Returns the timestamp (float, seconds) to use as the enable= start for
-    the WM_EC drawbox filter. Falls back to (total - 9) if detection fails.
+    Scan the last 20 s of the video to find the exact frame where the
+    NotebookLM end card begins (near-pure-white full-screen background).
+    Returns the timestamp in seconds. Falls back to (total - 9) if not found.
     """
-    total      = _probe_duration(path)
-    scan_from  = max(0.0, total - 20.0)
-    fallback   = max(0.0, total - 9.0)
-    step       = 0.5  # sample every 0.5 s
+    total     = _probe_duration(path)
+    scan_from = max(0.0, total - 20.0)
+    fallback  = max(0.0, total - 9.0)
+    step      = 0.5
 
     t = scan_from
     while t < total - 1.0:
@@ -259,10 +251,8 @@ def _detect_end_card_start(path):
             )
             img = Image.open(tmp_frame)
             a   = np.array(img)
-            # Fraction of pixels brighter than 230 (near-white)
             bright_frac = (a.mean(axis=2) > 230).sum() / (a.shape[0] * a.shape[1])
             if bright_frac > 0.95:
-                # Found the transition — use this timestamp
                 return t
         except Exception:
             pass
@@ -302,16 +292,18 @@ def remove_notebooklm_watermark(inp, out, progress_cb=None):
     Cover all NotebookLM branding in one FFmpeg pass.
 
     Zone 1 — Top-centre (title slide, first WM_TOP_DURATION seconds only):
-        White box, time-gated with lte(t, WM_TOP_DURATION).
-        Prevents the box appearing on later content slides.
+        White box, time-gated. Only the opening title slide has the top bar.
 
     Zone 2 — Bottom-right badge (all content slides, every frame):
-        White box at WM_BR_* + SLC logo on top at LOGO_* (same coordinates).
+        White box sized exactly to the badge (WM_BR_*).
+        SLC logo (LOGO_W × LOGO_H) centred inside the white box.
+        The white box background matches the slide's near-white background
+        so it's invisible — only the logo is visible.
 
     Zone 3 — End-card full-screen (dynamically detected start time):
-        White box at WM_EC_* covering icon + notebooklm.google.com URL.
-        Start time is detected per-video so it never fires early on the
-        last content slide. Height = WM_EC_H (360 px, covers full content).
+        White box (WM_EC_*) covers the centred icon + notebooklm.google.com.
+        Start time detected per-video so it never fires on the last content slide.
+        SLC logo still appears bottom-right (zone 2 is always active).
     """
     inp_str = str(inp)
     out_str = str(out)
@@ -322,17 +314,21 @@ def remove_notebooklm_watermark(inp, out, progress_cb=None):
     ecs       = _detect_end_card_start(inp_str)
     enable_ec = f"gte(t\\,{ecs:.2f})"
 
-    # ── Zone 1: top-centre white box (title slide only, time-gated) ──────
+    # ── Zone 1: top-centre, title slide only ──────────────────────────
     WM_TOP = (
         f"drawbox=x=810:y=148:w=280:h=55"
         f":color=white@1:t=fill:enable='lte(t\\,{WM_TOP_DURATION})'"
     )
 
-    # ── Zone 2: bottom-right badge ─────────────────────────────────────
-    # NO white drawbox here — the slide background is already near-white.
-    # The SLC logo is overlaid directly on top of the NotebookLM badge.
+    # ── Zone 2: bottom-right badge, always ────────────────────────────
+    # White box sized to badge footprint — blends with slide background.
+    # Logo is centred inside via LOGO_X/Y computed from WM_BR_* constants.
+    WM_BR = (
+        f"drawbox=x={WM_BR_X}:y={WM_BR_Y}:w={WM_BR_W}:h={WM_BR_H}"
+        f":color=white@1:t=fill"
+    )
 
-    # ── Zone 3: end-card centre white box (dynamically gated) ─────────
+    # ── Zone 3: end-card centre, dynamically gated ────────────────────
     WM_EC = (
         f"drawbox=x={WM_EC_X}:y={WM_EC_Y}:w={WM_EC_W}:h={WM_EC_H}"
         f":color=white@1:t=fill:enable='{enable_ec}'"
@@ -341,9 +337,9 @@ def remove_notebooklm_watermark(inp, out, progress_cb=None):
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
     if use_logo:
-        # Apply zone 1 + zone 3 white boxes, then overlay logo at badge position
+        # All three white boxes applied, then logo overlaid at badge position
         filter_complex = (
-            f"[0:v]{WM_TOP},{WM_EC}[cov];"
+            f"[0:v]{WM_TOP},{WM_BR},{WM_EC}[cov];"
             f"[1:v]scale={LOGO_W}:{LOGO_H}[logo];"
             f"[cov][logo]overlay=x={LOGO_X}:y={LOGO_Y}[vout]"
         )
@@ -358,10 +354,10 @@ def remove_notebooklm_watermark(inp, out, progress_cb=None):
             out_str,
         ]
     else:
-        # No logo — white boxes for zones 1 and 3 only (zone 2 not needed)
+        # No logo — white boxes for all three zones
         cmd = [
             "ffmpeg", "-y", "-i", inp_str,
-            "-vf", f"{WM_TOP},{WM_EC}",
+            "-vf", f"{WM_TOP},{WM_BR},{WM_EC}",
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
             "-r", "30", "-pix_fmt", "yuv420p",
@@ -509,6 +505,8 @@ video{border-radius:12px;border:1px solid rgba(96,204,190,.2)}
 </style>
 """, unsafe_allow_html=True)
 
+
+# ──────────────────────── LAYOUT ──────────────────────────────────────
 st.markdown("""
 <div style="display:flex;align-items:center;gap:16px;margin-bottom:8px">
   <h1 style="margin:0;font-size:28px">🎬 SLC Video Merger</h1>

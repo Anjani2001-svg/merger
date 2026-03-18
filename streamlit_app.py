@@ -36,8 +36,8 @@ SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 # Badge measured: x=1450-1727 (w=277), y=900-971 (h=71), centre x=1588 y=935
 
 # Logo size — set to match the NotebookLM badge footprint
-LOGO_W = 200   # px — reduce this to make the logo smaller
-LOGO_H = 55    # px — keep ratio roughly 3.6:1 to match the SLC logo shape
+LOGO_W = 160   # was 200
+LOGO_H = 44    # was 55
 
 # Position: centred on the badge (badge centre x=1588, y=935)
 LOGO_X = 1588 - LOGO_W // 2   # 1488
@@ -47,9 +47,9 @@ LOGO_Y = 935  - LOGO_H // 2   # 907
 # Measured from actual video frames. Extra-generous padding so height
 # always covers the full text even if the URL wraps slightly differently.
 WM_EC_X = 448
-WM_EC_Y = 350
+WM_EC_Y = 310  # was 350 — moves box up
 WM_EC_W = 1024
-WM_EC_H = 400   # was 229 — increased to fully cover icon + URL text
+WM_EC_H = 420    # was 229 — increased to fully cover icon + URL text
 
 # ── Top-centre watermark (title slide only) ─────────────────────────────
 WM_TOP_DURATION = 20   # seconds; top bar only exists on the opening title slide

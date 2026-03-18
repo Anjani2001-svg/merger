@@ -36,7 +36,7 @@ INTRO_TPL = BASE_DIR / "assets" / "intro_template.mp4"
 SLC_LOGO = BASE_DIR / "assets" / "slc_logo.png"
 
 # Logo display size (pixels) — matches the bottom-right watermark zone
-LOGO_W, LOGO_H = 220, 73
+LOGO_W, LOGO_H = 120, 63
 
 # Bottom-right position — same on every slide including the end card
 LOGO_X = 1920 - LOGO_W - 20   # = 1680  (20 px from right edge)

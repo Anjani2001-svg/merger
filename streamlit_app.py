@@ -39,8 +39,8 @@ WM_BR_H = 72
 # Logo sits inside the white box with 5 px inner padding
 LOGO_W = 140
 LOGO_H = 46
-LOGO_X = WM_BR_X + (WM_BR_W - LOGO_W) // 2   # centres horizontally in the box
-LOGO_Y = WM_BR_Y + (WM_BR_H - LOGO_H) // 2   # centres vertically in the box
+LOGO_X = WM_BR_X + 5     # 1523
+LOGO_Y = WM_BR_Y + 5     
 
 # ── End-card centre cover (icon + notebooklm.google.com URL) ────────────
 # Measured from actual video frames. Extra-generous padding so height

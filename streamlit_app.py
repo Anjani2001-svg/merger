@@ -47,9 +47,9 @@ LOGO_Y = 935  - LOGO_H // 2   # 907
 # Measured from actual video frames. Extra-generous padding so height
 # always covers the full text even if the URL wraps slightly differently.
 WM_EC_X = 448
-WM_EC_Y = 310  # was 350 — moves box up
+WM_EC_Y = 350  # was 350 — moves box up
 WM_EC_W = 1024
-WM_EC_H = 420    # was 229 — increased to fully cover icon + URL text
+WM_EC_H = 360    # was 229 — increased to fully cover icon + URL text
 
 # ── Top-centre watermark (title slide only) ─────────────────────────────
 WM_TOP_DURATION = 20   # seconds; top bar only exists on the opening title slide

@@ -46,7 +46,7 @@ SLC_LOGO = BASE_DIR / "assets" / "slc_logo.png"
 # If the badge moves in a future NotebookLM update, change only these.
 WM_BR_X = 1518   # left edge of the badge
 WM_BR_Y = 905    # top edge of the badge
-WM_BR_W = 125    # width  (covers icon + "NotebookLM" text)
+WM_BR_W = 200    # width  (covers icon + "NotebookLM" text)
 WM_BR_H = 62     # height
 
 # SLC logo is centred within the badge zone (5 px inner padding each side)

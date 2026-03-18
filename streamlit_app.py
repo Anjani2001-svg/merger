@@ -5,10 +5,14 @@ All text is rendered by Pillow (no FFmpeg drawtext = no escaping bugs).
 FFmpeg only does: overlay PNG on video, normalise, transitions, concatenate.
 
 NotebookLM watermark zones covered:
-  1. Top-centre      (title slides, persistent)   x=810  y=148  w=280  h=55
-  2. Bottom-right    (content slides, persistent) x=1498 y=882  w=265  h=100
-  3. End card        (last ~10s, full branding)   x=508  y=400  w=903  h=229
-     -> End card zone is replaced with the SLC logo centred on screen.
+  1. Top-centre  (title slides, always)       x=810  y=148  w=280  h=55
+                                               → white box
+  2. Bottom-right badge (content slides, always) x=1498 y=882  w=265  h=100
+                                               → white box + SLC logo (always)
+  3. End-card centre (last ~12 s)             x=508  y=400  w=903  h=229
+                                               → white box (hides notebooklm.google.com)
+                                                 SLC logo still sits bottom-right
+                                                 (same position as zone 2, same size)
 """
 
 import os
@@ -28,12 +32,17 @@ st.set_page_config(page_title="SLC Video Merger", page_icon="🎬", layout="wide
 BASE_DIR  = Path(__file__).parent
 INTRO_TPL = BASE_DIR / "assets" / "intro_template.mp4"
 
-# Place your SLC logo PNG at assets/slc_logo.png, OR upload it in the UI.
-# It will be used to replace the NotebookLM end-card branding.
+# Place your SLC logo PNG here, OR upload it in the Streamlit UI below.
 SLC_LOGO = BASE_DIR / "assets" / "slc_logo.png"
 
-# How many seconds before the end to assume the NotebookLM end card starts.
-# The end card in the sample video runs for ~9 s; 12 s gives a safe margin.
+# Logo display size (pixels) — matches the bottom-right watermark zone
+LOGO_W, LOGO_H = 220, 73
+
+# Bottom-right position — same on every slide including the end card
+LOGO_X = 1920 - LOGO_W - 20   # = 1680  (20 px from right edge)
+LOGO_Y = 1080 - LOGO_H - 20   # = 987   (20 px from bottom edge)
+
+# How many seconds before the end to treat as the NotebookLM end card
 END_CARD_SECONDS = 12
 
 
@@ -255,43 +264,45 @@ def normalise(inp, out):
 
 def remove_notebooklm_watermark(inp, out):
     """
-    Cover all three NotebookLM watermark zones in one FFmpeg pass.
+    Cover all NotebookLM branding in a single FFmpeg pass.
 
-    Zone 1 - Top-centre (title slides, always):
-        x=810  y=148  w=280  h=55    white box
+    Without SLC logo:
+      - Zone 1 (top-centre, always):      white box
+      - Zone 2 (bottom-right, always):    white box
+      - Zone 3 (end-card centre, last 12s): white box
 
-    Zone 2 - Bottom-right (content slides, always):
-        x=1498 y=882  w=265  h=100   white box
-
-    Zone 3 - End card (last END_CARD_SECONDS of the clip):
-        x=508  y=400  w=903  h=229   white box + SLC logo centred
-        Logo is scaled to 380x127 and placed at x=769, y=451.
-        If assets/slc_logo.png is missing the zone is still whited out.
+    With SLC logo (assets/slc_logo.png present):
+      - Zone 1:  white box                         (logo not needed here)
+      - Zone 2:  white box + SLC logo bottom-right (always, all slides)
+      - Zone 3:  white box over centre             (hides notebooklm.google.com)
+                 SLC logo still sits bottom-right  (same position as Zone 2)
+      This makes every slide — including the end card — look like the
+      screenshot: clean bottom-right SLC branding, nothing else.
     """
     inp_str = str(inp)
     out_str = str(out)
 
     total     = _probe_duration(inp_str)
-    ecs       = max(0.0, total - END_CARD_SECONDS)  # end-card start (seconds)
-    enable_ec = f"gte(t\\,{ecs:.3f})"               # FFmpeg enable expression
+    ecs       = max(0.0, total - END_CARD_SECONDS)
+    enable_ec = f"gte(t\\,{ecs:.3f})"
 
-    # ── Three drawbox filters ──────────────────────────────────────────
+    # ── Drawbox filters ────────────────────────────────────────────────
     WM_TOP = "drawbox=x=810:y=148:w=280:h=55:color=white@1:t=fill"
     WM_BR  = "drawbox=x=1498:y=882:w=265:h=100:color=white@1:t=fill"
-    WM_EC  = f"drawbox=x=508:y=400:w=903:h=229:color=white@1:t=fill:enable='{enable_ec}'"
+    WM_EC  = (
+        f"drawbox=x=508:y=400:w=903:h=229"
+        f":color=white@1:t=fill:enable='{enable_ec}'"
+    )
 
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
     if use_logo:
-        # Logo 380x127, centred inside the end-card zone
-        # End-card zone centre: x=959, y=514
-        # Logo top-left:        x=959-190=769, y=514-63=451
-        LOGO_X, LOGO_Y, LOGO_W, LOGO_H = 769, 451, 380, 127
-
+        # ── Logo overlaid bottom-right on EVERY frame (all slides + end card) ──
+        # The logo replaces the NotebookLM badge in the same corner, same size.
         filter_complex = (
             f"[0:v]{WM_TOP},{WM_BR},{WM_EC}[cov];"
             f"[1:v]scale={LOGO_W}:{LOGO_H}[logo];"
-            f"[cov][logo]overlay=x={LOGO_X}:y={LOGO_Y}:enable='{enable_ec}'[vout]"
+            f"[cov][logo]overlay=x={LOGO_X}:y={LOGO_Y}[vout]"
         )
 
         cmd = [
@@ -306,7 +317,7 @@ def remove_notebooklm_watermark(inp, out):
             out_str,
         ]
     else:
-        # No logo - white boxes only
+        # ── No logo — white boxes only ─────────────────────────────────
         cmd = [
             "ffmpeg", "-y",
             "-i", inp_str,
@@ -413,7 +424,7 @@ def preview_frame(course, unit_num, unit_title):
         if result.returncode != 0:
             raise RuntimeError(f"FFmpeg frame extract failed:\n{result.stderr[-300:]}")
         if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) < 100:
-            raise RuntimeError("FFmpeg produced an empty frame - template may be corrupt.")
+            raise RuntimeError("FFmpeg produced an empty frame — template may be corrupt.")
         bg = Image.open(tmp_path).convert("RGBA")
         bg.load()
     finally:
@@ -543,30 +554,32 @@ st.markdown("---")
 
 # ── 2b  SLC LOGO UPLOAD ───────────────────────────────────────────────
 st.markdown(
-    '<div><span class="sn">✦</span><span class="st">SLC Logo (for end-card replacement)</span></div>',
+    '<div><span class="sn">✦</span>'
+    '<span class="st">SLC Logo (replaces NotebookLM badge)</span></div>',
     unsafe_allow_html=True,
 )
 st.markdown(
     '<p style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:10px">'
-    'Upload the SLC logo PNG to replace the <em>notebooklm.google.com</em> end-card branding. '
-    'If skipped, a plain white cover is used instead.</p>',
+    'Upload the SLC logo PNG. It will appear in the <strong>bottom-right corner '
+    'on every slide</strong> (including the end card) — exactly where the '
+    'NotebookLM badge sits. If skipped, plain white boxes are used.</p>',
     unsafe_allow_html=True,
 )
 
 logo_upload = st.file_uploader(
     "SLC Logo PNG",
     type=["png"],
-    help="Transparent PNG preferred. Centred on the end-card screen.",
+    help="Transparent PNG preferred.",
 )
 
 if logo_upload is not None:
     SLC_LOGO.parent.mkdir(parents=True, exist_ok=True)
     SLC_LOGO.write_bytes(logo_upload.getvalue())
-    st.success("✅ Logo saved — will replace the NotebookLM end card.")
+    st.success("✅ Logo saved — will appear bottom-right on every slide.")
 elif SLC_LOGO.exists():
     st.info("ℹ️ Using existing logo at `assets/slc_logo.png`.")
 else:
-    st.warning("⚠️ No logo uploaded — end card will be covered with a white box only.")
+    st.warning("⚠️ No logo uploaded — watermark zones will be covered with white only.")
 
 st.markdown("---")
 
@@ -578,7 +591,7 @@ st.markdown(
 st.markdown(
     '<p style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:16px">'
     'Merges custom intro + 4-colour transition + NotebookLM video '
-    '(all watermarks removed/replaced) + standard outro.</p>',
+    '(all watermarks replaced) + standard outro.</p>',
     unsafe_allow_html=True,
 )
 
@@ -629,10 +642,9 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
 
             # ── Step 2: remove all NotebookLM watermarks ──────────────
             msg.info(
-                "⏳ **Step 2 / 4** — Removing NotebookLM watermarks "
-                "(top bar · bottom-right badge · end-card screen)…"
+                "⏳ **Step 2 / 4** — Replacing NotebookLM branding with SLC logo…"
             )
-            bar.progress(40, "Removing watermarks…")
+            bar.progress(40, "Replacing watermarks…")
 
             norm_clean = remove_notebooklm_watermark(
                 results["norm"],

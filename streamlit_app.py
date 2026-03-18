@@ -49,7 +49,7 @@ LOGO_Y = 935  - LOGO_H // 2   # 907
 WM_EC_X = 448
 WM_EC_Y = 350
 WM_EC_W = 1024
-WM_EC_H = 360   # was 229 — increased to fully cover icon + URL text
+WM_EC_H = 400   # was 229 — increased to fully cover icon + URL text
 
 # ── Top-centre watermark (title slide only) ─────────────────────────────
 WM_TOP_DURATION = 20   # seconds; top bar only exists on the opening title slide

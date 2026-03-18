@@ -5,31 +5,22 @@ All text is rendered by Pillow (no FFmpeg drawtext = no escaping bugs).
 FFmpeg only does: overlay PNG on video, normalise, transitions, concatenate.
 
 NotebookLM watermark zones covered:
-  1. Top-centre  (title slide only, first 20s)   x=810  y=148  w=280  h=55
-                                                  → white box, time-gated
-  2. Bottom-right badge (content slides, always)  defined by WM_BR_* constants
-                                                  → white box + SLC logo on top
-  3. End-card centre (last ~12 s)                x=508  y=400  w=903  h=229
-                                                  → white box; SLC logo still
-                                                    bottom-right (same as zone 2)
-
-FIX NOTES vs previous version:
-  - WM_TOP was firing on ALL frames, covering content on slides that have no
-    top watermark. Now gated to the first 20 seconds only (title slide).
-  - WM_BR (white box) and the SLC logo overlay were in two different positions
-    (y=882 vs y=997), leaving a visible white gap. Now both are derived from
-    the same WM_BR_* constants so the logo sits exactly over the white box.
+  1. Top-centre  (title slide only, first 20s)      x=810  y=148  w=280  h=55
+  2. Bottom-right badge (all content slides)         WM_BR_* constants
+  3. End-card full-screen branding                   x=448  y=350  w=1024 h=360
+     Start time detected dynamically per video — never fires early on last slide.
 """
 
 import os
 import subprocess
-import time
 import tempfile
+import time
 from pathlib import Path
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image, ImageDraw, ImageFont
+import numpy as np
 import streamlit as st
 
 # ────────────────────────────── CONFIG ──────────────────────────────────
@@ -37,31 +28,30 @@ st.set_page_config(page_title="SLC Video Merger", page_icon="🎬", layout="wide
 
 BASE_DIR  = Path(__file__).parent
 INTRO_TPL = BASE_DIR / "assets" / "intro_template.mp4"
+SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 
-# Place your SLC logo PNG here, OR upload it in the Streamlit UI below.
-SLC_LOGO = BASE_DIR / "assets" / "slc_logo.png"
+# ── Bottom-right badge constants (shared by white box AND logo overlay) ─
+WM_BR_X = 1518
+WM_BR_Y = 905
+WM_BR_W = 225
+WM_BR_H = 72
 
-# ── NotebookLM bottom-right badge — measured position in 1920×1080 ────
-# These four values define both the white cover box AND the logo position.
-# If the badge moves in a future NotebookLM update, change only these.
-WM_BR_X = 1518   # left edge of the badge
-WM_BR_Y = 905    # top edge of the badge
-WM_BR_W = 220    # width  (covers icon + "NotebookLM" text)
-WM_BR_H = 96     # height
+# Logo sits inside the white box with 5 px inner padding
+LOGO_W = WM_BR_W - 10    # 215
+LOGO_H = WM_BR_H - 10    # 62
+LOGO_X = WM_BR_X + 5     # 1523
+LOGO_Y = WM_BR_Y + 5     # 910
 
-# SLC logo is centred within the badge zone (5 px inner padding each side)
-LOGO_W  = WM_BR_W - 10          # 215 px
-LOGO_H  = WM_BR_H - 10          # 62 px
-LOGO_X  = WM_BR_X + 5           # 1523 — same left edge + padding
-LOGO_Y  = WM_BR_Y + 5           # 910  — same top  edge + padding
+# ── End-card centre cover (icon + notebooklm.google.com URL) ────────────
+# Measured from actual video frames. Extra-generous padding so height
+# always covers the full text even if the URL wraps slightly differently.
+WM_EC_X = 448
+WM_EC_Y = 350
+WM_EC_W = 1024
+WM_EC_H = 360   # was 229 — increased to fully cover icon + URL text
 
-# How many seconds of the NotebookLM video have the TOP-CENTRE watermark.
-# The "NotebookLM" text at the top only appears on the title/intro slide.
-# Setting 20 s is generous; adjust down if it fires on content slides.
-WM_TOP_DURATION = 20
-
-# How many seconds before the end to treat as the full-screen end card.
-END_CARD_SECONDS = 6
+# ── Top-centre watermark (title slide only) ─────────────────────────────
+WM_TOP_DURATION = 20   # seconds; top bar only exists on the opening title slide
 
 
 def _font(name):
@@ -78,9 +68,8 @@ def _font(name):
 
 BOLD   = _font("Poppins-Bold.ttf")
 MEDIUM = _font("Poppins-Medium.ttf")
-
-TEAL  = (96, 204, 190)
-WHITE = (255, 255, 255)
+TEAL   = (96, 204, 190)
+WHITE  = (255, 255, 255)
 
 
 # ──────────────────── PILLOW: RENDER TEXT AS PNG ───────────────────────
@@ -92,7 +81,6 @@ def _ft(path, size):
 
 
 def render_intro_overlay(course, unit_num, unit_title, W=1920, H=1080):
-    """Return a 1920×1080 RGBA PNG with all text centred on screen."""
     img  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     pad  = W - 200
@@ -176,7 +164,6 @@ def render_end_overlay(W=1920, H=1080):
 
 # ────────────────────── FFMPEG HELPERS ─────────────────────────────────
 def _ff(cmd, timeout=600):
-    """Run an ffmpeg command; raise on failure."""
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if r.returncode != 0:
         err   = r.stderr.strip().split("\n")
@@ -186,47 +173,35 @@ def _ff(cmd, timeout=600):
 
 
 def make_intro(course, unit_num, unit_title, tmp):
-    """Overlay text PNG onto intro template with rise animation."""
     png = str(tmp / "intro_overlay.png")
     out = str(tmp / "intro.mp4")
-
     render_intro_overlay(course, unit_num, unit_title).save(png, "PNG")
     y = "if(lt(t\\,0.8)\\,300*pow(1-t/0.8\\,2)\\,0)"
-
     _ff([
-        "ffmpeg", "-y",
-        "-i", str(INTRO_TPL),
-        "-loop", "1", "-i", png,
+        "ffmpeg", "-y", "-i", str(INTRO_TPL), "-loop", "1", "-i", png,
         "-filter_complex",
         f"[1:v]format=rgba[ovr];[0:v][ovr]overlay=x=0:y='{y}':shortest=1[out]",
         "-map", "[out]", "-map", "0:a?",
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
         "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
-        "-r", "30", "-pix_fmt", "yuv420p",
-        out,
+        "-r", "30", "-pix_fmt", "yuv420p", out,
     ], timeout=60)
     return Path(out)
 
 
 def make_outro(tmp):
-    """Overlay END badge onto intro template with rise animation."""
     png = str(tmp / "end_overlay.png")
     out = str(tmp / "outro.mp4")
-
     render_end_overlay().save(png, "PNG")
     y = "if(lt(t\\,0.8)\\,250*pow(1-t/0.8\\,2)\\,0)"
-
     _ff([
-        "ffmpeg", "-y",
-        "-i", str(INTRO_TPL),
-        "-loop", "1", "-i", png,
+        "ffmpeg", "-y", "-i", str(INTRO_TPL), "-loop", "1", "-i", png,
         "-filter_complex",
         f"[1:v]format=rgba[ovr];[0:v][ovr]overlay=x=0:y='{y}':shortest=1[out]",
         "-map", "[out]", "-map", "0:a?",
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
         "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
-        "-r", "30", "-pix_fmt", "yuv420p",
-        out,
+        "-r", "30", "-pix_fmt", "yuv420p", out,
     ], timeout=60)
     return Path(out)
 
@@ -245,23 +220,66 @@ def _probe_duration(path):
 
 def _has_audio(path):
     r = subprocess.run([
-        "ffprobe", "-v", "error",
-        "-select_streams", "a",
-        "-show_entries", "stream=index",
-        "-of", "csv=p=0",
+        "ffprobe", "-v", "error", "-select_streams", "a",
+        "-show_entries", "stream=index", "-of", "csv=p=0",
         str(path),
     ], capture_output=True, text=True)
     return bool(r.stdout.strip())
 
 
+def _detect_end_card_start(path):
+    """
+    Scan the last 20 seconds of the video frame by frame to find the EXACT
+    timestamp where the NotebookLM end card begins (the high-brightness
+    pure-white-background screen that replaces the last content slide).
+
+    Detection rule:
+      A frame is the end-card transition when overall brightness > 95%
+      (nearly all pixels are white/near-white). Content slides have lots of
+      dark text and coloured elements, so their brightness is well below this.
+
+    Returns the timestamp (float, seconds) to use as the enable= start for
+    the WM_EC drawbox filter. Falls back to (total - 9) if detection fails.
+    """
+    total      = _probe_duration(path)
+    scan_from  = max(0.0, total - 20.0)
+    fallback   = max(0.0, total - 9.0)
+    step       = 0.5  # sample every 0.5 s
+
+    t = scan_from
+    while t < total - 1.0:
+        fd, tmp_frame = tempfile.mkstemp(suffix=".jpg")
+        os.close(fd)
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-ss", f"{t:.2f}", "-i", str(path),
+                 "-vframes", "1", tmp_frame],
+                capture_output=True, timeout=8,
+            )
+            img = Image.open(tmp_frame)
+            a   = np.array(img)
+            # Fraction of pixels brighter than 230 (near-white)
+            bright_frac = (a.mean(axis=2) > 230).sum() / (a.shape[0] * a.shape[1])
+            if bright_frac > 0.95:
+                # Found the transition — use this timestamp
+                return t
+        except Exception:
+            pass
+        finally:
+            try:
+                os.unlink(tmp_frame)
+            except OSError:
+                pass
+        t += step
+
+    return fallback
+
+
 def normalise(inp, out):
-    """Scale/pad any video to 1920×1080 @ 30 fps, h264+aac."""
     has_audio = _has_audio(inp)
     cmd = ["ffmpeg", "-y", "-i", str(inp)]
-
     if not has_audio:
         cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
-
     cmd += [
         "-vf",
         "scale=1920:1080:force_original_aspect_ratio=decrease,"
@@ -271,63 +289,59 @@ def normalise(inp, out):
         "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
         "-pix_fmt", "yuv420p",
     ]
-
     if not has_audio:
         cmd += ["-shortest"]
-
     cmd += [str(out)]
     _ff(cmd)
     return Path(out)
 
 
-def remove_notebooklm_watermark(inp, out):
+def remove_notebooklm_watermark(inp, out, progress_cb=None):
     """
     Cover all NotebookLM branding in one FFmpeg pass.
 
-    Zone 1 — Top-centre (title slide only, first WM_TOP_DURATION seconds):
-        White box, time-gated. This ONLY fires during the opening title slide
-        where the "NotebookLM" text appears at the top. Without the time gate
-        it would cover content on later slides that have no top watermark.
+    Zone 1 — Top-centre (title slide, first WM_TOP_DURATION seconds only):
+        White box, time-gated with lte(t, WM_TOP_DURATION).
+        Prevents the box appearing on later content slides.
 
-    Zone 2 — Bottom-right badge (all content slides, always):
-        White box at WM_BR_* position covers the badge.
-        SLC logo overlaid at LOGO_* position — derived from the SAME constants,
-        so logo sits exactly over the white box with 5 px padding each side.
+    Zone 2 — Bottom-right badge (all content slides, every frame):
+        White box at WM_BR_* + SLC logo on top at LOGO_* (same coordinates).
 
-    Zone 3 — End-card full-screen branding (last END_CARD_SECONDS):
-        White box covers the centred notebooklm.google.com icon + URL.
-        SLC logo remains bottom-right (same as Zone 2 — no change needed).
+    Zone 3 — End-card full-screen (dynamically detected start time):
+        White box at WM_EC_* covering icon + notebooklm.google.com URL.
+        Start time is detected per-video so it never fires early on the
+        last content slide. Height = WM_EC_H (360 px, covers full content).
     """
     inp_str = str(inp)
     out_str = str(out)
 
-    total     = _probe_duration(inp_str)
-    ecs       = max(0.0, total - END_CARD_SECONDS)
-    enable_ec = f"gte(t\\,{ecs:.3f})"
+    if progress_cb:
+        progress_cb("Detecting end-card start time…")
 
-    # ── FIX 1: WM_TOP is time-gated (title slide only) ────────────────
+    ecs       = _detect_end_card_start(inp_str)
+    enable_ec = f"gte(t\\,{ecs:.2f})"
+
+    # ── Zone 1: top-centre, title slide only ──────────────────────────
     WM_TOP = (
         f"drawbox=x=810:y=148:w=280:h=55"
         f":color=white@1:t=fill:enable='lte(t\\,{WM_TOP_DURATION})'"
     )
 
-    # ── FIX 2: WM_BR uses the shared WM_BR_* constants ────────────────
+    # ── Zone 2: bottom-right badge, always ────────────────────────────
     WM_BR = (
         f"drawbox=x={WM_BR_X}:y={WM_BR_Y}:w={WM_BR_W}:h={WM_BR_H}"
         f":color=white@1:t=fill"
     )
 
-    # End-card centre cover (time-gated to last END_CARD_SECONDS)
+    # ── Zone 3: end-card centre, dynamically gated ────────────────────
     WM_EC = (
-        f"drawbox=x=508:y=400:w=903:h=229"
+        f"drawbox=x={WM_EC_X}:y={WM_EC_Y}:w={WM_EC_W}:h={WM_EC_H}"
         f":color=white@1:t=fill:enable='{enable_ec}'"
     )
 
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
     if use_logo:
-        # Logo centred within the white box — LOGO_* derived from WM_BR_*
-        # (see constants at top of file). Applied to every frame.
         filter_complex = (
             f"[0:v]{WM_TOP},{WM_BR},{WM_EC}[cov];"
             f"[1:v]scale={LOGO_W}:{LOGO_H}[logo];"
@@ -335,8 +349,7 @@ def remove_notebooklm_watermark(inp, out):
         )
         cmd = [
             "ffmpeg", "-y",
-            "-i", inp_str,
-            "-i", str(SLC_LOGO),
+            "-i", inp_str, "-i", str(SLC_LOGO),
             "-filter_complex", filter_complex,
             "-map", "[vout]", "-map", "0:a",
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
@@ -346,8 +359,7 @@ def remove_notebooklm_watermark(inp, out):
         ]
     else:
         cmd = [
-            "ffmpeg", "-y",
-            "-i", inp_str,
+            "ffmpeg", "-y", "-i", inp_str,
             "-vf", f"{WM_TOP},{WM_BR},{WM_EC}",
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
@@ -360,17 +372,13 @@ def remove_notebooklm_watermark(inp, out):
 
 
 def add_notebooklm_transition(intro, main, out, duration=1.0, direction="left"):
-    """Add a Canva-style 4-colour wipe before the NotebookLM segment."""
     transition_map = {
-        "left":  "wipeleft",
-        "right": "wiperight",
-        "up":    "wipeup",
-        "down":  "wipedown",
+        "left": "wipeleft", "right": "wiperight",
+        "up": "wipeup", "down": "wipedown",
     }
     wipe    = transition_map.get(direction, "wipeleft")
     intro_d = _probe_duration(intro)
     half    = max(0.25, min(duration / 2, intro_d - 0.05))
-
     if half <= 0:
         raise RuntimeError("Intro is too short to apply the transition.")
 
@@ -381,11 +389,9 @@ def add_notebooklm_transition(intro, main, out, duration=1.0, direction="left"):
         "drawbox=x=1037:y=0:w=346:h=1080:color=0x7EDFC3:t=fill,"
         "drawbox=x=1383:y=0:w=537:h=1080:color=0xB7E4C7:t=fill"
     )
-
     _ff([
         "ffmpeg", "-y",
-        "-i", str(intro),
-        "-i", str(main),
+        "-i", str(intro), "-i", str(main),
         "-f", "lavfi", "-t", f"{duration}", "-i", color_columns,
         "-f", "lavfi", "-t", f"{duration}", "-i", "anullsrc=r=48000:cl=stereo",
         "-filter_complex",
@@ -402,17 +408,14 @@ def add_notebooklm_transition(intro, main, out, duration=1.0, direction="left"):
         "-r", "30", "-pix_fmt", "yuv420p",
         str(out),
     ], timeout=180)
-
     return Path(out)
 
 
 def concat(parts, out, tmp):
-    """Concatenate videos via demuxer (fast copy, fallback re-encode)."""
     lst = tmp / "list.txt"
     with open(lst, "w") as f:
         for p in parts:
             f.write(f"file '{Path(p).resolve()}'\n")
-
     try:
         _ff(["ffmpeg", "-y", "-f", "concat", "-safe", "0",
              "-i", str(lst), "-c", "copy", str(out)])
@@ -422,12 +425,10 @@ def concat(parts, out, tmp):
              "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
              "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p",
              str(out)])
-
     return Path(out)
 
 
 def preview_frame(course, unit_num, unit_title):
-    """Quick JPEG preview: overlay text on a still from the template."""
     if not INTRO_TPL.exists():
         raise FileNotFoundError(
             f"Intro template not found at: {INTRO_TPL}\n"
@@ -435,10 +436,8 @@ def preview_frame(course, unit_num, unit_title):
         )
     if INTRO_TPL.stat().st_size < 1000:
         raise ValueError(
-            f"Intro template is too small ({INTRO_TPL.stat().st_size} bytes) — "
-            "file may be a Git LFS pointer. Re-upload the actual .mp4."
+            f"Intro template is too small ({INTRO_TPL.stat().st_size} bytes)."
         )
-
     tmp_path = None
     try:
         fd, tmp_path = tempfile.mkstemp(suffix=".png")
@@ -451,7 +450,7 @@ def preview_frame(course, unit_num, unit_title):
         if result.returncode != 0:
             raise RuntimeError(f"FFmpeg frame extract failed:\n{result.stderr[-300:]}")
         if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) < 100:
-            raise RuntimeError("FFmpeg produced an empty frame — template may be corrupt.")
+            raise RuntimeError("FFmpeg produced an empty frame.")
         bg = Image.open(tmp_path).convert("RGBA")
         bg.load()
     finally:
@@ -460,7 +459,6 @@ def preview_frame(course, unit_num, unit_title):
                 os.unlink(tmp_path)
             except OSError:
                 pass
-
     ovr  = render_intro_overlay(course, unit_num, unit_title)
     comp = Image.alpha_composite(bg, ovr).convert("RGB")
     buf  = BytesIO()
@@ -469,7 +467,6 @@ def preview_frame(course, unit_num, unit_title):
     return buf
 
 
-# ── Startup check ──────────────────────────────────────────────────────
 def _check_template():
     if not INTRO_TPL.exists():
         st.error(
@@ -482,8 +479,7 @@ def _check_template():
     if size < 10000:
         st.error(
             f"❌ **Intro template appears corrupt!**\n\n"
-            f"File size: {size} bytes (expected ~950 KB)\n\n"
-            "This usually means the file is not the real MP4."
+            f"File size: {size} bytes (expected ~950 KB)"
         )
         st.stop()
 
@@ -512,8 +508,6 @@ video{border-radius:12px;border:1px solid rgba(96,204,190,.2)}
 </style>
 """, unsafe_allow_html=True)
 
-
-# ──────────────────────── LAYOUT ──────────────────────────────────────
 st.markdown("""
 <div style="display:flex;align-items:center;gap:16px;margin-bottom:8px">
   <h1 style="margin:0;font-size:28px">🎬 SLC Video Merger</h1>
@@ -536,19 +530,16 @@ st.markdown(
     '<div><span class="sn">1</span><span class="st">Intro Customisation</span></div>',
     unsafe_allow_html=True,
 )
-
 course_name = st.text_input(
     "Course Name",
     placeholder="e.g. Level 3 Diploma in Sports Development (RQF)",
 )
-
 c1, c2 = st.columns(2)
 with c1:
     unit_number = st.text_input(
         "Unit / Chapter Number",
         placeholder="e.g. UNIT 03 | CHAPTER 06",
     )
-
 if st.button("👁 Preview Intro", type="secondary"):
     if course_name and unit_number:
         with st.spinner("Rendering…"):
@@ -567,13 +558,11 @@ st.markdown(
     '<div><span class="sn">2</span><span class="st">Upload NotebookLM Video</span></div>',
     unsafe_allow_html=True,
 )
-
 vid = st.file_uploader(
     "Upload your NotebookLM video",
     type=["mp4", "mov", "webm", "avi", "mkv"],
     help="MP4 / MOV / WebM — up to 500 MB",
 )
-
 if vid:
     st.success(f"📁 **{vid.name}** — {vid.size / 1048576:.1f} MB")
 
@@ -587,18 +576,13 @@ st.markdown(
 )
 st.markdown(
     '<p style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:10px">'
-    'Upload the SLC logo PNG. It replaces the NotebookLM badge in the '
-    '<strong>bottom-right corner on every slide</strong> including the end card. '
-    'If skipped, plain white boxes are used instead.</p>',
+    'Upload the SLC logo PNG. Replaces the NotebookLM badge in the '
+    '<strong>bottom-right corner on every slide</strong> including the end card.</p>',
     unsafe_allow_html=True,
 )
-
 logo_upload = st.file_uploader(
-    "SLC Logo PNG",
-    type=["png"],
-    help="Transparent PNG preferred.",
+    "SLC Logo PNG", type=["png"], help="Transparent PNG preferred.",
 )
-
 if logo_upload is not None:
     SLC_LOGO.parent.mkdir(parents=True, exist_ok=True)
     SLC_LOGO.write_bytes(logo_upload.getvalue())
@@ -644,7 +628,6 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
             raw = tmp / "raw.mp4"
             raw.write_bytes(vid.getvalue())
 
-            # ── Step 1: build intro, outro, normalise (parallel) ──────
             msg.info("⏳ **Step 1 / 4** — Building intro, outro and normalising video…")
             bar.progress(10, "Processing in parallel…")
 
@@ -667,35 +650,31 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
                     "; ".join(f"{k}: {v}" for k, v in errors.items())
                 )
 
-            # ── Step 2: replace all NotebookLM branding ───────────────
             msg.info(
-                "⏳ **Step 2 / 4** — Replacing NotebookLM branding with SLC logo…"
+                "⏳ **Step 2 / 4** — Detecting end-card position & replacing "
+                "NotebookLM branding…"
             )
             bar.progress(40, "Replacing watermarks…")
 
             norm_clean = remove_notebooklm_watermark(
                 results["norm"],
                 tmp / "norm_clean.mp4",
+                progress_cb=lambda s: msg.info(f"⏳ **Step 2 / 4** — {s}"),
             )
 
-            # ── Step 3: 4-colour transition ────────────────────────────
             msg.info("⏳ **Step 3 / 4** — Adding 4-colour transition…")
             bar.progress(65, "Creating transition…")
 
             main_with_transition = add_notebooklm_transition(
-                results["intro"],
-                norm_clean,
-                tmp / "intro_and_main.mp4",
+                results["intro"], norm_clean, tmp / "intro_and_main.mp4",
             )
 
-            # ── Step 4: final concat ───────────────────────────────────
             msg.info("⏳ **Step 4 / 4** — Merging final segments…")
             bar.progress(85, "Merging…")
 
             final = concat(
                 [main_with_transition, results["outro"]],
-                tmp / "final.mp4",
-                tmp,
+                tmp / "final.mp4", tmp,
             )
 
             bar.progress(100, "Done!")
@@ -717,8 +696,7 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
             """, unsafe_allow_html=True)
 
             st.markdown(
-                '<div style="margin:16px 0">'
-                '<span class="sn">▶</span>'
+                '<div style="margin:16px 0"><span class="sn">▶</span>'
                 '<span class="st">Preview</span></div>',
                 unsafe_allow_html=True,
             )
@@ -729,11 +707,8 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
             filename = f"SLC_Video_{safec}_{safeu}.mp4"
 
             st.download_button(
-                "⬇ Download Final Video",
-                data,
-                filename,
-                "video/mp4",
-                use_container_width=True,
+                "⬇ Download Final Video", data, filename,
+                "video/mp4", use_container_width=True,
             )
 
         except Exception as e:

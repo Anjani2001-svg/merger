@@ -40,7 +40,7 @@ WM_BR_H = 72
 LOGO_W = WM_BR_W - 10    # 215
 LOGO_H = WM_BR_H - 10    # 62
 LOGO_X = WM_BR_X + 5     # 1523
-LOGO_Y = WM_BR_Y + 5     # 910
+LOGO_Y = WM_BR_Y + 6     # 910
 
 # ── End-card centre cover (icon + notebooklm.google.com URL) ────────────
 # Measured from actual video frames. Extra-generous padding so height

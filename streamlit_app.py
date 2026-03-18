@@ -30,17 +30,18 @@ BASE_DIR  = Path(__file__).parent
 INTRO_TPL = BASE_DIR / "assets" / "intro_template.mp4"
 SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 
-# ── Bottom-right badge constants (shared by white box AND logo overlay) ─
-WM_BR_X = 1518
-WM_BR_Y = 905
-WM_BR_W = 225
-WM_BR_H = 82
+# ── Bottom-right badge — measured position in 1920×1080 ────────────────
+# The background here is already near-white so NO white drawbox is used.
+# We just overlay the SLC logo directly on top of the NotebookLM badge.
+# Badge measured: x=1450-1727 (w=277), y=900-971 (h=71), centre x=1588 y=935
 
-# Logo sits inside the white box with 5 px inner padding
-LOGO_W = 140
-LOGO_H = 46
-LOGO_X = WM_BR_X + 5     # 1523
-LOGO_Y = WM_BR_Y + 5     
+# Logo size — set to match the NotebookLM badge footprint
+LOGO_W = 200   # px — reduce this to make the logo smaller
+LOGO_H = 55    # px — keep ratio roughly 3.6:1 to match the SLC logo shape
+
+# Position: centred on the badge (badge centre x=1588, y=935)
+LOGO_X = 1588 - LOGO_W // 2   # 1488
+LOGO_Y = 935  - LOGO_H // 2   # 907
 
 # ── End-card centre cover (icon + notebooklm.google.com URL) ────────────
 # Measured from actual video frames. Extra-generous padding so height
@@ -321,19 +322,17 @@ def remove_notebooklm_watermark(inp, out, progress_cb=None):
     ecs       = _detect_end_card_start(inp_str)
     enable_ec = f"gte(t\\,{ecs:.2f})"
 
-    # ── Zone 1: top-centre, title slide only ──────────────────────────
+    # ── Zone 1: top-centre white box (title slide only, time-gated) ──────
     WM_TOP = (
         f"drawbox=x=810:y=148:w=280:h=55"
         f":color=white@1:t=fill:enable='lte(t\\,{WM_TOP_DURATION})'"
     )
 
-    # ── Zone 2: bottom-right badge, always ────────────────────────────
-    WM_BR = (
-        f"drawbox=x={WM_BR_X}:y={WM_BR_Y}:w={WM_BR_W}:h={WM_BR_H}"
-        f":color=white@1:t=fill"
-    )
+    # ── Zone 2: bottom-right badge ─────────────────────────────────────
+    # NO white drawbox here — the slide background is already near-white.
+    # The SLC logo is overlaid directly on top of the NotebookLM badge.
 
-    # ── Zone 3: end-card centre, dynamically gated ────────────────────
+    # ── Zone 3: end-card centre white box (dynamically gated) ─────────
     WM_EC = (
         f"drawbox=x={WM_EC_X}:y={WM_EC_Y}:w={WM_EC_W}:h={WM_EC_H}"
         f":color=white@1:t=fill:enable='{enable_ec}'"
@@ -342,8 +341,9 @@ def remove_notebooklm_watermark(inp, out, progress_cb=None):
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
     if use_logo:
+        # Apply zone 1 + zone 3 white boxes, then overlay logo at badge position
         filter_complex = (
-            f"[0:v]{WM_TOP},{WM_BR},{WM_EC}[cov];"
+            f"[0:v]{WM_TOP},{WM_EC}[cov];"
             f"[1:v]scale={LOGO_W}:{LOGO_H}[logo];"
             f"[cov][logo]overlay=x={LOGO_X}:y={LOGO_Y}[vout]"
         )
@@ -358,9 +358,10 @@ def remove_notebooklm_watermark(inp, out, progress_cb=None):
             out_str,
         ]
     else:
+        # No logo — white boxes for zones 1 and 3 only (zone 2 not needed)
         cmd = [
             "ffmpeg", "-y", "-i", inp_str,
-            "-vf", f"{WM_TOP},{WM_BR},{WM_EC}",
+            "-vf", f"{WM_TOP},{WM_EC}",
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
             "-r", "30", "-pix_fmt", "yuv420p",

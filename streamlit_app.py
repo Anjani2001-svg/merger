@@ -38,8 +38,8 @@ WM_BR_W = 277    # width  — covers icon + "NotebookLM" text
 WM_BR_H = 75     # height — slight extra to fully cover badge
 
 # Logo — smaller than the box, centred inside it
-LOGO_W  = 140
-LOGO_H  = 39
+LOGO_W  = 100
+LOGO_H  = 33
 LOGO_X  = WM_BR_X + (WM_BR_W - LOGO_W) // 2   # centred horizontally in box
 LOGO_Y  = WM_BR_Y + (WM_BR_H - LOGO_H) // 2   # centred vertically in box
 

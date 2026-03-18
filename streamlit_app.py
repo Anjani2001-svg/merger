@@ -34,7 +34,7 @@ SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 WM_BR_X = 1518
 WM_BR_Y = 905
 WM_BR_W = 225
-WM_BR_H = 72
+WM_BR_H = 82
 
 # Logo sits inside the white box with 5 px inner padding
 LOGO_W = 140

@@ -3,6 +3,7 @@
 SLC Video Merger – Streamlit Edition
 All text is rendered by Pillow (no FFmpeg drawtext = no escaping bugs).
 FFmpeg only does: overlay PNG on video, normalise, transitions, concatenate.
+NotebookLM watermarks are removed via white drawbox overlays.
 """
 
 import os
@@ -21,6 +22,10 @@ st.set_page_config(page_title="SLC Video Merger", page_icon="🎬", layout="wide
 
 BASE_DIR = Path(__file__).parent
 INTRO_TPL = BASE_DIR / "assets" / "intro_template.mp4"
+
+# Optional: place your SLC logo PNG at assets/slc_logo.png to brand the
+# intro/outro transition zones instead of a plain white box there.
+SLC_LOGO = BASE_DIR / "assets" / "slc_logo.png"
 
 
 def _font(name):
@@ -260,6 +265,69 @@ def normalise(inp, out):
 
     cmd += [str(out)]
     _ff(cmd)
+    return Path(out)
+
+
+def remove_notebooklm_watermark(inp, out, logo_duration=5.0):
+    """
+    Cover NotebookLM watermarks using white drawbox overlays (invisible
+    against NotebookLM's near-white background).
+
+    Two zones are covered on every frame:
+      • Top-centre   (title slides):   x=810  y=148  w=280  h=55
+      • Bottom-right (content slides): x=1498 y=882  w=265  h=100
+
+    If assets/slc_logo.png exists, it is also overlaid at the
+    bottom-right position for the first and last `logo_duration` seconds
+    (the sections nearest the intro and outro), replacing the blank box
+    with a branded element.
+    """
+    inp_str = str(inp)
+    out_str = str(out)
+
+    # White boxes that cover both watermark zones
+    WM_TOP = "drawbox=x=810:y=148:w=280:h=55:color=white@1:t=fill"
+    WM_BR  = "drawbox=x=1498:y=882:w=265:h=100:color=white@1:t=fill"
+
+    use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
+
+    if use_logo:
+        total = _probe_duration(inp_str)
+        end_start = max(0, total - logo_duration)
+        logo_enable = (
+            f"enable='between(t,0,{logo_duration})+between(t,{end_start},{total})'"
+        )
+
+        filter_complex = (
+            f"[0:v]{WM_TOP},{WM_BR}[cov];"
+            f"[1:v]scale=220:70[logo];"
+            f"[cov][logo]overlay=x=1490:y=990:{logo_enable}[vout]"
+        )
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", inp_str,
+            "-i", str(SLC_LOGO),
+            "-filter_complex", filter_complex,
+            "-map", "[vout]", "-map", "0:a",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+            "-r", "30", "-pix_fmt", "yuv420p",
+            out_str,
+        ]
+    else:
+        # No logo — plain white boxes over both watermark zones, full clip
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", inp_str,
+            "-vf", f"{WM_TOP},{WM_BR}",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+            "-r", "30", "-pix_fmt", "yuv420p",
+            out_str,
+        ]
+
+    _ff(cmd, timeout=300)
     return Path(out)
 
 
@@ -504,7 +572,7 @@ st.markdown("---")
 st.markdown('<div><span class="sn">3</span><span class="st">Generate Final Video</span></div>', unsafe_allow_html=True)
 st.markdown(
     '<p style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:16px">'
-    'Merges custom intro + 4-colour Canva-style transition + uploaded video + standard outro.</p>',
+    'Merges custom intro + 4-colour Canva-style transition + uploaded video (watermarks removed) + standard outro.</p>',
     unsafe_allow_html=True
 )
 
@@ -532,8 +600,8 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
             raw = tmp / "raw.mp4"
             raw.write_bytes(vid.getvalue())
 
-            msg.info("⏳ **Step 1 / 3** — Building intro, outro and normalising video…")
-            bar.progress(15, "Processing in parallel…")
+            msg.info("⏳ **Step 1 / 4** — Building intro, outro and normalising video…")
+            bar.progress(10, "Processing in parallel…")
 
             results = {}
             errors = {}
@@ -552,16 +620,25 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
             if errors:
                 raise RuntimeError("; ".join(f"{k}: {v}" for k, v in errors.items()))
 
-            msg.info("⏳ **Step 2 / 3** — Adding 4-colour transition before the NotebookLM video…")
-            bar.progress(70, "Creating transition…")
+            # ── NEW: Remove NotebookLM watermarks ──────────────────────
+            msg.info("⏳ **Step 2 / 4** — Removing NotebookLM watermarks…")
+            bar.progress(40, "Removing watermarks…")
+
+            norm_clean = remove_notebooklm_watermark(
+                results["norm"],
+                tmp / "norm_clean.mp4",
+            )
+
+            msg.info("⏳ **Step 3 / 4** — Adding 4-colour transition before the NotebookLM video…")
+            bar.progress(65, "Creating transition…")
 
             main_with_transition = add_notebooklm_transition(
                 results["intro"],
-                results["norm"],
+                norm_clean,           # ← uses watermark-free version
                 tmp / "intro_and_main.mp4",
             )
 
-            msg.info("⏳ **Step 3 / 3** — Merging final segments…")
+            msg.info("⏳ **Step 4 / 4** — Merging final segments…")
             bar.progress(85, "Merging final segments…")
 
             final = concat(

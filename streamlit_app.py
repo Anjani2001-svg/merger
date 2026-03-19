@@ -266,43 +266,52 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
 
     if use_logo:
         # inputs: 0=video  1=br_png  2=ec_png  3=logo
+        # PNG inputs without -loop: FFmpeg reads them as single frames.
+        # -shortest stops encoding when the shortest input (video) ends.
         fc = (
-            "[0:v][1:v]overlay=x=0:y=0[v1];"
-            f"[v1][2:v]overlay=x=0:y=0:enable='{enable_ec}'[v2];"
+            "[1:v]format=rgba[br];"
+            "[0:v][br]overlay=x=0:y=0[v1];"
+            "[2:v]format=rgba[ec];"
+            f"[v1][ec]overlay=x=0:y=0:enable='{enable_ec}'[v2];"
             f"[3:v]scale=-1:{logo_h}[logo];"
             f"[v2][logo]overlay=x='{logo_cx}-(w/2)':y='{logo_cy}-(h/2)'[vout]"
         )
         cmd = [
             "ffmpeg", "-y",
             "-i", inp_str,
-            "-loop", "1", "-i", str(br_png),
-            "-loop", "1", "-i", str(ec_png),
+            "-i", str(br_png),
+            "-i", str(ec_png),
             "-i", str(SLC_LOGO),
             "-filter_complex", fc,
             "-map", "[vout]", "-map", "0:a",
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
-            "-r", "30", "-pix_fmt", "yuv420p", out_str,
+            "-r", "30", "-pix_fmt", "yuv420p", "-shortest", out_str,
         ]
     else:
         # inputs: 0=video  1=br_png  2=ec_png
         fc = (
-            "[0:v][1:v]overlay=x=0:y=0[v1];"
-            f"[v1][2:v]overlay=x=0:y=0:enable='{enable_ec}'[vout]"
+            "[1:v]format=rgba[br];"
+            "[0:v][br]overlay=x=0:y=0[v1];"
+            "[2:v]format=rgba[ec];"
+            f"[v1][ec]overlay=x=0:y=0:enable='{enable_ec}'[vout]"
         )
         cmd = [
             "ffmpeg", "-y",
             "-i", inp_str,
-            "-loop", "1", "-i", str(br_png),
-            "-loop", "1", "-i", str(ec_png),
+            "-i", str(br_png),
+            "-i", str(ec_png),
             "-filter_complex", fc,
             "-map", "[vout]", "-map", "0:a",
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
-            "-r", "30", "-pix_fmt", "yuv420p", out_str,
+            "-r", "30", "-pix_fmt", "yuv420p", "-shortest", out_str,
         ]
 
-    _ff(cmd, timeout=600)
+    # Scale timeout with video length: 25s processing per minute of video, min 900s
+    duration   = _probe_duration(inp_str)
+    wm_timeout = max(900, int(duration * 25))
+    _ff(cmd, timeout=wm_timeout)
     return Path(out)
 
 

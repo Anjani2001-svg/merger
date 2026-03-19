@@ -31,8 +31,8 @@ SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 #   1920×1080 native: x=1733, y=970, w=163, h=87
 #   1280×720 source:  scaled down by 1/1.5
 WM_COORDS = {
-    (1920, 1080): dict(br_x=1733, br_y=970, br_w=163, br_h=87),
-    (1280, 720):  dict(br_x=1155, br_y=646, br_w=108, br_h=58),
+    (1920, 1080): dict(br_x=1662, br_y=980, br_w=233, br_h=89),
+    (1280, 720):  dict(br_x=1108, br_y=653, br_w=156, br_h=60),
 }
 WM_FALLBACK = WM_COORDS[(1920, 1080)]
 

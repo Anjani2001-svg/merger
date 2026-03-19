@@ -41,10 +41,12 @@ WM_COORDS = {
     # 1920×1080 native source — measured directly from video frames
     (1920, 1080): dict(
         top_x=810,  top_y=148, top_w=280, top_h=55,
+        br_x=1450,  br_y=900,  br_w=277,  br_h=71,
     ),
     # 1280×720 source — all values scaled 1.5× by normalise()
     (1280, 720): dict(
         top_x=806,  top_y=68,  top_w=285, top_h=45,
+        br_x=1654,  br_y=984,  br_w=210,  br_h=42,
     ),
 }
 
@@ -335,6 +337,8 @@ def remove_notebooklm_watermark(inp, out, src_resolution, progress_cb=None):
     coords = WM_COORDS.get(src_resolution, WM_FALLBACK)
     tx  = coords["top_x"]; ty  = coords["top_y"]
     tw  = coords["top_w"]; th  = coords["top_h"]
+    brx = coords["br_x"];  bry = coords["br_y"]
+    brw = coords["br_w"];  brh = coords["br_h"]
 
     if progress_cb:
         progress_cb("Detecting end-card start time…")
@@ -346,20 +350,9 @@ def remove_notebooklm_watermark(inp, out, src_resolution, progress_cb=None):
         f"drawbox=x={tx}:y={ty}:w={tw}:h={th}"
         f":color=white@1:t=fill:enable='lte(t\\,{WM_TOP_DURATION})'"
     )
-
-    # ── WM_BR: sized to wrap the logo exactly ─────────────────────────
-    # Logo is anchored at y=H-LOGO_H-LOGO_PAD, x=W-logo_w-LOGO_PAD.
-    # SLC logo natural ratio ≈ 3.5:1, so estimated width = LOGO_H * 3.5.
-    # White box adds BOX_INNER_PAD on all sides so logo sits inside it.
-    BOX_INNER_PAD = 6
-    est_logo_w = int(LOGO_H * 3.5)            # estimated logo width
-    box_w      = est_logo_w + BOX_INNER_PAD * 2
-    box_h      = LOGO_H     + BOX_INNER_PAD * 2
-    box_x      = 1920 - LOGO_PAD - box_w      # right-aligned with logo
-    box_y      = 1080 - LOGO_PAD - box_h      # bottom-aligned with logo
-
+    # White box sized exactly to the NotebookLM badge footprint
     WM_BR = (
-        f"drawbox=x={box_x}:y={box_y}:w={box_w}:h={box_h}"
+        f"drawbox=x={brx}:y={bry}:w={brw}:h={brh}"
         f":color=white@1:t=fill"
     )
     WM_EC = (
@@ -370,13 +363,22 @@ def remove_notebooklm_watermark(inp, out, src_resolution, progress_cb=None):
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
     if use_logo:
-        # scale=-1:LOGO_H → width auto-calculated to preserve aspect ratio
-        # overlay=x=W-w-pad:y=H-h-pad → anchored to bottom-right corner
+        # Logo height = box height minus inner padding on each side
+        logo_h   = brh - 8
+        # x/y: centre the logo inside the white box
+        # scale=-1:logo_h preserves natural aspect ratio (no stretching)
+        logo_cx  = brx + brw // 2   # centre x of the white box
+        logo_cy  = bry + brh // 2   # centre y of the white box
+        # overlay x/y refer to top-left of the logo after scaling;
+        # use (ow) and (oh) expressions so FFmpeg computes exact width
+        logo_x_expr = f"{logo_cx}-(w/2)"
+        logo_y_expr = f"{logo_cy}-(h/2)"
+
         filter_complex = (
             f"[0:v]{WM_TOP},{WM_BR},{WM_EC}[cov];"
-            f"[1:v]scale=-1:{LOGO_H}[logo];"
+            f"[1:v]scale=-1:{logo_h}[logo];"
             f"[cov][logo]overlay="
-            f"x=W-w-{LOGO_PAD}:y=H-h-{LOGO_PAD}"
+            f"x='{logo_x_expr}':y='{logo_y_expr}'"
             f"[vout]"
         )
         cmd = [

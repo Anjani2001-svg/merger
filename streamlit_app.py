@@ -1,23 +1,14 @@
 #!/usr/bin/env python3
 """
 SLC Video Merger – Streamlit Edition
-All text is rendered by Pillow (no FFmpeg drawtext = no escaping bugs).
-FFmpeg only does: overlay PNG on video, normalise, transitions, concatenate.
 
-Watermark removal is resolution-aware:
-  • 1920×1080 source → tight coordinates measured from that native resolution
-  • 1280×720  source → tight coordinates scaled 1.5× after normalise()
-  • Other resolutions → falls back to the 1920×1080 set
-
-Logo overlay uses scale=-1:LOGO_H so the natural aspect ratio is always
-preserved — no stretching or squashing regardless of the PNG dimensions.
-The logo is anchored to the bottom-right corner (W-w-pad : H-h-pad).
+Changes in this version:
+  - White boxes have rounded corners (Pillow PNG overlays, not drawbox)
+  - WM_TOP covers from t=0 so the 0.26 s watermark is caught immediately
+  - Optional Google Drive upload via service-account JSON
 """
 
-import os
-import subprocess
-import tempfile
-import time
+import io, json, os, subprocess, tempfile, time
 from pathlib import Path
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
@@ -26,69 +17,48 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import streamlit as st
 
-# ────────────────────────────── CONFIG ──────────────────────────────────
+try:
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseUpload
+    from google.oauth2 import service_account
+    GDRIVE_AVAILABLE = True
+except ImportError:
+    GDRIVE_AVAILABLE = False
+
 st.set_page_config(page_title="SLC Video Merger", page_icon="🎬", layout="wide")
 
-BASE_DIR  = Path(__file__).parent
-INTRO_TPL = BASE_DIR / "assets" / "intro_template.mp4"
-SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
-
-# ── Per-resolution watermark cover boxes (in 1920×1080 space) ───────────
-# Only the white drawboxes are resolution-specific.
-# The logo overlay is resolution-independent (see LOGO_* below).
+BASE_DIR     = Path(__file__).parent
+INTRO_TPL    = BASE_DIR / "assets" / "intro_template.mp4"
+SLC_LOGO     = BASE_DIR / "assets" / "slc_logo.png"
+GDRIVE_CREDS = BASE_DIR / "assets" / "gdrive_credentials.json"
 
 WM_COORDS = {
-    # 1920×1080 native source — measured directly from video frames
-    (1920, 1080): dict(
-        top_x=810,  top_y=148, top_w=280, top_h=55,
-        br_x=1450,  br_y=900,  br_w=277,  br_h=71,
-    ),
-    # 1280×720 source — all values scaled 1.5× by normalise()
-    (1280, 720): dict(
-        top_x=806,  top_y=68,  top_w=285, top_h=45,
-        br_x=1654,  br_y=984,  br_w=210,  br_h=42,
-    ),
+    (1920, 1080): dict(top_x=810, top_y=148, top_w=280, top_h=55,
+                       br_x=1450, br_y=900,  br_w=277,  br_h=71),
+    (1280, 720):  dict(top_x=806, top_y=68,  top_w=285, top_h=45,
+                       br_x=1654, br_y=984,  br_w=210,  br_h=42),
 }
+WM_FALLBACK      = WM_COORDS[(1920, 1080)]
+BOX_RADIUS       = 10
+WM_EC_X, WM_EC_Y = 448, 310
+WM_EC_W, WM_EC_H = 1024, 420
+EC_RADIUS        = 14
+WM_TOP_DURATION  = 20   # seconds — covers from t=0 onwards
 
-WM_FALLBACK = WM_COORDS[(1920, 1080)]
-
-# ── Logo overlay (resolution-independent) ───────────────────────────────
-# Scaled to LOGO_H height with WIDTH CALCULATED AUTOMATICALLY by FFmpeg
-# using scale=-1:LOGO_H — this preserves the natural aspect ratio of the
-# PNG so the logo never looks fat or stretched.
-# Anchored to bottom-right: overlay=x=W-w-LOGO_PAD:y=H-h-LOGO_PAD
-LOGO_H   = 52    # pixels tall in 1920×1080 output — adjust to taste
-LOGO_PAD = 20    # pixels from right and bottom edges
-
-# ── Top-centre watermark (title slide only) ─────────────────────────────
-WM_TOP_DURATION = 20   # seconds
-
-# ── End-card centre cover (same for all resolutions) ────────────────────
-WM_EC_X = 448
-WM_EC_Y = 310
-WM_EC_W = 1024
-WM_EC_H = 420
+TEAL, WHITE = (96, 204, 190), (255, 255, 255)
 
 
 def _font(name):
-    candidates = [
-        str(BASE_DIR / "fonts" / name),
-        f"/usr/share/fonts/truetype/google-fonts/{name}",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    ]
-    for c in candidates:
+    for c in [str(BASE_DIR / "fonts" / name),
+              f"/usr/share/fonts/truetype/google-fonts/{name}",
+              "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"]:
         if os.path.exists(c):
             return c
     return None
 
-
-BOLD   = _font("Poppins-Bold.ttf")
-MEDIUM = _font("Poppins-Medium.ttf")
-TEAL   = (96, 204, 190)
-WHITE  = (255, 255, 255)
+BOLD, MEDIUM = _font("Poppins-Bold.ttf"), _font("Poppins-Medium.ttf")
 
 
-# ──────────────────── PILLOW: RENDER TEXT AS PNG ───────────────────────
 def _ft(path, size):
     try:
         return ImageFont.truetype(path, size) if path else ImageFont.load_default()
@@ -96,114 +66,120 @@ def _ft(path, size):
         return ImageFont.load_default()
 
 
+def _make_box_png(boxes, path, W=1920, H=1080):
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    for (x, y, w, h, r) in boxes:
+        draw.rounded_rectangle([x, y, x+w, y+h], radius=r, fill=(255, 255, 255, 255))
+    img.save(str(path), "PNG")
+    return path
+
+
 def render_intro_overlay(course, unit_num, unit_title, W=1920, H=1080):
     img  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     pad  = W - 200
-
-    csz = 52
-    cfn = _ft(BOLD, csz)
+    csz  = 52
+    cfn  = _ft(BOLD, csz)
     while csz > 28:
         bb = draw.textbbox((0, 0), course, font=cfn)
-        if bb[2] - bb[0] <= pad:
-            break
-        csz -= 2
-        cfn  = _ft(BOLD, csz)
+        if bb[2] - bb[0] <= pad: break
+        csz -= 2; cfn = _ft(BOLD, csz)
     c_asc, c_desc = cfn.getmetrics()
     c_h = c_asc + c_desc
-
-    ufn  = _ft(BOLD, 28)
+    ufn = _ft(BOLD, 28)
     utxt = unit_num.upper()
-    bb   = draw.textbbox((0, 0), utxt, font=ufn)
-    badge_tw = bb[2] - bb[0]
-    badge_w  = badge_tw + 70
-    badge_h  = 56
-
+    bb = draw.textbbox((0, 0), utxt, font=ufn)
+    badge_w = bb[2] - bb[0] + 70; badge_h = 56
     has_title = bool(unit_title and unit_title.strip())
-    title_h   = 0
+    title_h = 0
     if has_title:
-        tsz = 30
-        tfn = _ft(MEDIUM, tsz)
+        tsz = 30; tfn = _ft(MEDIUM, tsz)
         while tsz > 20:
             bb = draw.textbbox((0, 0), unit_title, font=tfn)
-            if bb[2] - bb[0] <= pad:
-                break
-            tsz -= 2
-            tfn  = _ft(MEDIUM, tsz)
+            if bb[2] - bb[0] <= pad: break
+            tsz -= 2; tfn = _ft(MEDIUM, tsz)
         t_asc, t_desc = tfn.getmetrics()
         title_h = t_asc + t_desc
-
-    gap1    = 45
-    gap2    = 25
-    block_h = c_h + gap1 + badge_h
+    gap1 = 45; gap2 = 25
+    block_h = c_h + gap1 + badge_h + (gap2 + title_h if has_title else 0)
+    start_y = (H // 2 - 60) - block_h // 2
+    draw.text((W//2, start_y + c_h//2), course, fill=WHITE, font=cfn, anchor="mm")
+    bx = (W - badge_w) // 2; by = start_y + c_h + gap1
+    draw.rounded_rectangle([bx, by, bx+badge_w, by+badge_h], radius=14, fill=TEAL+(230,))
+    draw.text((bx+badge_w//2, by+badge_h//2), utxt, fill=WHITE, font=ufn, anchor="mm")
     if has_title:
-        block_h += gap2 + title_h
-
-    center_y = (H // 2) - 60
-    start_y  = center_y - block_h // 2
-
-    draw.text((W // 2, start_y + c_h // 2), course,
-              fill=WHITE, font=cfn, anchor="mm")
-
-    badge_x = (W - badge_w) // 2
-    badge_y = start_y + c_h + gap1
-    draw.rounded_rectangle(
-        [badge_x, badge_y, badge_x + badge_w, badge_y + badge_h],
-        radius=14, fill=TEAL + (230,))
-    draw.text((badge_x + badge_w // 2, badge_y + badge_h // 2),
-              utxt, fill=WHITE, font=ufn, anchor="mm")
-
-    if has_title:
-        title_y = badge_y + badge_h + gap2
-        draw.text((W // 2, title_y + title_h // 2), unit_title,
-                  fill=WHITE, font=tfn, anchor="mm")
-
+        ty2 = by + badge_h + gap2
+        draw.text((W//2, ty2+title_h//2), unit_title, fill=WHITE, font=tfn, anchor="mm")
     return img
 
 
 def render_end_overlay(W=1920, H=1080):
-    img  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    fn   = _ft(BOLD, 42)
-    bb   = draw.textbbox((0, 0), "END", font=fn)
-    tw   = bb[2] - bb[0]
-    bw, bh = tw + 90, 72
-    bx, by = (W - bw) // 2, (H - bh) // 2 - 20
-
-    draw.rounded_rectangle(
-        [bx, by, bx + bw, by + bh],
-        radius=16, fill=TEAL + (230,))
-    draw.text((bx + bw // 2, by + bh // 2), "END",
-              fill=WHITE, font=fn, anchor="mm")
+    fn = _ft(BOLD, 42)
+    bb = draw.textbbox((0, 0), "END", font=fn)
+    bw, bh = bb[2]-bb[0]+90, 72
+    bx, by = (W-bw)//2, (H-bh)//2 - 20
+    draw.rounded_rectangle([bx, by, bx+bw, by+bh], radius=16, fill=TEAL+(230,))
+    draw.text((bx+bw//2, by+bh//2), "END", fill=WHITE, font=fn, anchor="mm")
     return img
 
 
-# ────────────────────── FFMPEG HELPERS ─────────────────────────────────
 def _ff(cmd, timeout=600):
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if r.returncode != 0:
-        err   = r.stderr.strip().split("\n")
-        short = "\n".join(err[-6:]) if len(err) > 6 else r.stderr
-        raise RuntimeError(short)
+        err = r.stderr.strip().split("\n")
+        raise RuntimeError("\n".join(err[-6:]) if len(err) > 6 else r.stderr)
     return r
 
 
 def _probe_resolution(path):
-    """Return (width, height) of the first video stream."""
-    r = subprocess.run([
-        "ffprobe", "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "stream=width,height",
-        "-of", "csv=p=0",
-        str(path),
-    ], capture_output=True, text=True)
-    if r.returncode != 0 or not r.stdout.strip():
-        return (1920, 1080)
-    parts = r.stdout.strip().split(",")
+    r = subprocess.run(["ffprobe","-v","error","-select_streams","v:0",
+        "-show_entries","stream=width,height","-of","csv=p=0",str(path)],
+        capture_output=True, text=True)
     try:
-        return (int(parts[0]), int(parts[1]))
-    except (ValueError, IndexError):
+        w, h = r.stdout.strip().split(",")
+        return (int(w), int(h))
+    except Exception:
         return (1920, 1080)
+
+
+def _probe_duration(path):
+    r = subprocess.run(["ffprobe","-v","error","-show_entries","format=duration",
+        "-of","default=noprint_wrappers=1:nokey=1",str(path)],
+        capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        raise RuntimeError(f"Could not read duration for {path}")
+    return float(r.stdout.strip())
+
+
+def _has_audio(path):
+    r = subprocess.run(["ffprobe","-v","error","-select_streams","a",
+        "-show_entries","stream=index","-of","csv=p=0",str(path)],
+        capture_output=True, text=True)
+    return bool(r.stdout.strip())
+
+
+def _detect_end_card_start(path):
+    total = _probe_duration(path)
+    t = max(0.0, total - 20.0)
+    while t < total - 1.0:
+        fd, tmp_f = tempfile.mkstemp(suffix=".jpg")
+        os.close(fd)
+        try:
+            subprocess.run(["ffmpeg","-y","-ss",f"{t:.2f}","-i",str(path),
+                "-vframes","1",tmp_f], capture_output=True, timeout=8)
+            a = np.array(Image.open(tmp_f))
+            if (a.mean(axis=2) > 230).sum() / (a.shape[0]*a.shape[1]) > 0.95:
+                return t
+        except Exception:
+            pass
+        finally:
+            try: os.unlink(tmp_f)
+            except OSError: pass
+        t += 0.5
+    return max(0.0, total - 9.0)
 
 
 def make_intro(course, unit_num, unit_title, tmp):
@@ -211,15 +187,13 @@ def make_intro(course, unit_num, unit_title, tmp):
     out = str(tmp / "intro.mp4")
     render_intro_overlay(course, unit_num, unit_title).save(png, "PNG")
     y = "if(lt(t\\,0.8)\\,300*pow(1-t/0.8\\,2)\\,0)"
-    _ff([
-        "ffmpeg", "-y", "-i", str(INTRO_TPL), "-loop", "1", "-i", png,
+    _ff(["ffmpeg","-y","-i",str(INTRO_TPL),"-loop","1","-i",png,
         "-filter_complex",
         f"[1:v]format=rgba[ovr];[0:v][ovr]overlay=x=0:y='{y}':shortest=1[out]",
-        "-map", "[out]", "-map", "0:a?",
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
-        "-r", "30", "-pix_fmt", "yuv420p", out,
-    ], timeout=60)
+        "-map","[out]","-map","0:a?",
+        "-c:v","libx264","-preset","ultrafast","-crf","23",
+        "-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
+        "-r","30","-pix_fmt","yuv420p",out], timeout=60)
     return Path(out)
 
 
@@ -228,220 +202,125 @@ def make_outro(tmp):
     out = str(tmp / "outro.mp4")
     render_end_overlay().save(png, "PNG")
     y = "if(lt(t\\,0.8)\\,250*pow(1-t/0.8\\,2)\\,0)"
-    _ff([
-        "ffmpeg", "-y", "-i", str(INTRO_TPL), "-loop", "1", "-i", png,
+    _ff(["ffmpeg","-y","-i",str(INTRO_TPL),"-loop","1","-i",png,
         "-filter_complex",
         f"[1:v]format=rgba[ovr];[0:v][ovr]overlay=x=0:y='{y}':shortest=1[out]",
-        "-map", "[out]", "-map", "0:a?",
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
-        "-r", "30", "-pix_fmt", "yuv420p", out,
-    ], timeout=60)
+        "-map","[out]","-map","0:a?",
+        "-c:v","libx264","-preset","ultrafast","-crf","23",
+        "-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
+        "-r","30","-pix_fmt","yuv420p",out], timeout=60)
     return Path(out)
 
 
-def _probe_duration(path):
-    r = subprocess.run([
-        "ffprobe", "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        str(path),
-    ], capture_output=True, text=True)
-    if r.returncode != 0 or not r.stdout.strip():
-        raise RuntimeError(f"Could not read duration for {path}")
-    return float(r.stdout.strip())
-
-
-def _has_audio(path):
-    r = subprocess.run([
-        "ffprobe", "-v", "error", "-select_streams", "a",
-        "-show_entries", "stream=index", "-of", "csv=p=0",
-        str(path),
-    ], capture_output=True, text=True)
-    return bool(r.stdout.strip())
-
-
-def _detect_end_card_start(path):
-    """Scan the last 20 s for the first near-pure-white frame (end card)."""
-    total     = _probe_duration(path)
-    scan_from = max(0.0, total - 20.0)
-    fallback  = max(0.0, total - 9.0)
-    step      = 0.5
-
-    t = scan_from
-    while t < total - 1.0:
-        fd, tmp_frame = tempfile.mkstemp(suffix=".jpg")
-        os.close(fd)
-        try:
-            subprocess.run(
-                ["ffmpeg", "-y", "-ss", f"{t:.2f}", "-i", str(path),
-                 "-vframes", "1", tmp_frame],
-                capture_output=True, timeout=8,
-            )
-            img = Image.open(tmp_frame)
-            a   = np.array(img)
-            bright_frac = (a.mean(axis=2) > 230).sum() / (a.shape[0] * a.shape[1])
-            if bright_frac > 0.95:
-                return t
-        except Exception:
-            pass
-        finally:
-            try:
-                os.unlink(tmp_frame)
-            except OSError:
-                pass
-        t += step
-
-    return fallback
-
-
 def normalise(inp, out):
-    has_audio = _has_audio(inp)
-    cmd = ["ffmpeg", "-y", "-i", str(inp)]
-    if not has_audio:
-        cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
-    cmd += [
-        "-vf",
+    ha = _has_audio(inp)
+    cmd = ["ffmpeg","-y","-i",str(inp)]
+    if not ha: cmd += ["-f","lavfi","-i","anullsrc=r=48000:cl=stereo"]
+    cmd += ["-vf",
         "scale=1920:1080:force_original_aspect_ratio=decrease,"
         "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black",
-        "-r", "30",
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
-        "-pix_fmt", "yuv420p",
-    ]
-    if not has_audio:
-        cmd += ["-shortest"]
+        "-r","30","-c:v","libx264","-preset","ultrafast","-crf","23",
+        "-c:a","aac","-b:a","128k","-ar","48000","-ac","2","-pix_fmt","yuv420p"]
+    if not ha: cmd += ["-shortest"]
     cmd += [str(out)]
     _ff(cmd)
     return Path(out)
 
 
-def remove_notebooklm_watermark(inp, out, src_resolution, progress_cb=None):
+def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None):
     """
-    Cover all NotebookLM branding in one FFmpeg pass.
-
-    Zone 1 — Top-centre (title slide, first WM_TOP_DURATION seconds only):
-        Tight white box sized exactly to the badge for each source resolution.
-
-    Zone 2 — Bottom-right badge (all content slides, every frame):
-        Tight white box + SLC logo.
-        Logo uses scale=-1:LOGO_H so the natural aspect ratio is preserved.
-        Anchored to bottom-right corner via overlay=x=W-w-pad:y=H-h-pad.
-
-    Zone 3 — End-card full-screen (dynamically detected start time):
-        White box covers the centred notebooklm.google.com icon + URL.
+    Three zones, all using rounded-corner PNG overlays (not drawbox):
+      Zone 1 — Top-centre,  t=0..WM_TOP_DURATION  (catches 0.26s badge)
+      Zone 2 — Bottom-right badge, always on       (white box + SLC logo centred)
+      Zone 3 — End-card full-screen, dynamically gated
     """
-    inp_str = str(inp)
-    out_str = str(out)
-
+    inp_str, out_str = str(inp), str(out)
     coords = WM_COORDS.get(src_resolution, WM_FALLBACK)
-    tx  = coords["top_x"]; ty  = coords["top_y"]
-    tw  = coords["top_w"]; th  = coords["top_h"]
-    brx = coords["br_x"];  bry = coords["br_y"]
-    brw = coords["br_w"];  brh = coords["br_h"]
+    tx, ty, tw, th = coords["top_x"], coords["top_y"], coords["top_w"], coords["top_h"]
+    brx, bry, brw, brh = coords["br_x"], coords["br_y"], coords["br_w"], coords["br_h"]
 
-    if progress_cb:
-        progress_cb("Detecting end-card start time…")
+    if progress_cb: progress_cb("Detecting end-card start time…")
+    ecs        = _detect_end_card_start(inp_str)
+    enable_ec  = f"gte(t\\,{ecs:.2f})"
+    enable_top = f"between(t\\,0\\,{WM_TOP_DURATION})"
 
-    ecs       = _detect_end_card_start(inp_str)
-    enable_ec = f"gte(t\\,{ecs:.2f})"
-
-    WM_TOP = (
-        f"drawbox=x={tx}:y={ty}:w={tw}:h={th}"
-        f":color=white@1:t=fill:enable='lte(t\\,{WM_TOP_DURATION})'"
-    )
-    # White box sized exactly to the NotebookLM badge footprint
-    WM_BR = (
-        f"drawbox=x={brx}:y={bry}:w={brw}:h={brh}"
-        f":color=white@1:t=fill"
-    )
-    WM_EC = (
-        f"drawbox=x={WM_EC_X}:y={WM_EC_Y}:w={WM_EC_W}:h={WM_EC_H}"
-        f":color=white@1:t=fill:enable='{enable_ec}'"
-    )
+    br_png  = tmp / "wm_br.png"
+    top_png = tmp / "wm_top.png"
+    ec_png  = tmp / "wm_ec.png"
+    _make_box_png([(brx, bry, brw, brh, BOX_RADIUS)], br_png)
+    _make_box_png([(tx, ty, tw, th, BOX_RADIUS)], top_png)
+    _make_box_png([(WM_EC_X, WM_EC_Y, WM_EC_W, WM_EC_H, EC_RADIUS)], ec_png)
 
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
+    logo_h   = brh - 8
+    logo_cx  = brx + brw // 2
+    logo_cy  = bry + brh // 2
 
     if use_logo:
-        # Logo height = box height minus inner padding on each side
-        logo_h   = brh - 8
-        # x/y: centre the logo inside the white box
-        # scale=-1:logo_h preserves natural aspect ratio (no stretching)
-        logo_cx  = brx + brw // 2   # centre x of the white box
-        logo_cy  = bry + brh // 2   # centre y of the white box
-        # overlay x/y refer to top-left of the logo after scaling;
-        # use (ow) and (oh) expressions so FFmpeg computes exact width
-        logo_x_expr = f"{logo_cx}-(w/2)"
-        logo_y_expr = f"{logo_cy}-(h/2)"
-
-        filter_complex = (
-            f"[0:v]{WM_TOP},{WM_BR},{WM_EC}[cov];"
-            f"[1:v]scale=-1:{logo_h}[logo];"
-            f"[cov][logo]overlay="
-            f"x='{logo_x_expr}':y='{logo_y_expr}'"
-            f"[vout]"
+        fc = (
+            "[0:v][1:v]overlay=x=0:y=0[v1];"
+            f"[v1][2:v]overlay=x=0:y=0:enable='{enable_top}'[v2];"
+            f"[v2][3:v]overlay=x=0:y=0:enable='{enable_ec}'[v3];"
+            f"[4:v]scale=-1:{logo_h}[logo];"
+            f"[v3][logo]overlay=x='{logo_cx}-(w/2)':y='{logo_cy}-(h/2)'[vout]"
         )
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", inp_str, "-i", str(SLC_LOGO),
-            "-filter_complex", filter_complex,
-            "-map", "[vout]", "-map", "0:a",
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-            "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
-            "-r", "30", "-pix_fmt", "yuv420p",
-            out_str,
-        ]
+        cmd = ["ffmpeg","-y",
+               "-i", inp_str,
+               "-loop","1","-i",str(br_png),
+               "-loop","1","-i",str(top_png),
+               "-loop","1","-i",str(ec_png),
+               "-i", str(SLC_LOGO),
+               "-filter_complex", fc,
+               "-map","[vout]","-map","0:a",
+               "-c:v","libx264","-preset","ultrafast","-crf","23",
+               "-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
+               "-r","30","-pix_fmt","yuv420p", out_str]
     else:
-        cmd = [
-            "ffmpeg", "-y", "-i", inp_str,
-            "-vf", f"{WM_TOP},{WM_BR},{WM_EC}",
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-            "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
-            "-r", "30", "-pix_fmt", "yuv420p",
-            out_str,
-        ]
+        fc = (
+            "[0:v][1:v]overlay=x=0:y=0[v1];"
+            f"[v1][2:v]overlay=x=0:y=0:enable='{enable_top}'[v2];"
+            f"[v2][3:v]overlay=x=0:y=0:enable='{enable_ec}'[vout]"
+        )
+        cmd = ["ffmpeg","-y",
+               "-i", inp_str,
+               "-loop","1","-i",str(br_png),
+               "-loop","1","-i",str(top_png),
+               "-loop","1","-i",str(ec_png),
+               "-filter_complex", fc,
+               "-map","[vout]","-map","0:a",
+               "-c:v","libx264","-preset","ultrafast","-crf","23",
+               "-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
+               "-r","30","-pix_fmt","yuv420p", out_str]
 
     _ff(cmd, timeout=600)
     return Path(out)
 
 
 def add_notebooklm_transition(intro, main, out, duration=1.0, direction="left"):
-    transition_map = {
-        "left": "wipeleft", "right": "wiperight",
-        "up": "wipeup", "down": "wipedown",
-    }
-    wipe    = transition_map.get(direction, "wipeleft")
+    tm = {"left":"wipeleft","right":"wiperight","up":"wipeup","down":"wipedown"}
+    wipe    = tm.get(direction, "wipeleft")
     intro_d = _probe_duration(intro)
-    half    = max(0.25, min(duration / 2, intro_d - 0.05))
-    if half <= 0:
-        raise RuntimeError("Intro is too short to apply the transition.")
-
-    color_columns = (
-        "color=c=0x7B2CBF:s=1920x1080:r=30,"
-        "drawbox=x=0:y=0:w=576:h=1080:color=0x7B2CBF:t=fill,"
-        "drawbox=x=576:y=0:w=461:h=1080:color=0x4285F4:t=fill,"
-        "drawbox=x=1037:y=0:w=346:h=1080:color=0x7EDFC3:t=fill,"
-        "drawbox=x=1383:y=0:w=537:h=1080:color=0xB7E4C7:t=fill"
-    )
-    _ff([
-        "ffmpeg", "-y",
-        "-i", str(intro), "-i", str(main),
-        "-f", "lavfi", "-t", f"{duration}", "-i", color_columns,
-        "-f", "lavfi", "-t", f"{duration}", "-i", "anullsrc=r=48000:cl=stereo",
-        "-filter_complex",
-        "[0:v]fps=30,format=yuv420p,settb=AVTB[v0];"
-        "[1:v]fps=30,format=yuv420p,settb=AVTB[v1];"
-        "[2:v]fps=30,format=yuv420p,settb=AVTB[vc];"
-        f"[v0][vc]xfade=transition={wipe}:duration={half}:offset={max(intro_d - half, 0):.3f}[vx];"
-        f"[vx][v1]xfade=transition={wipe}:duration={half}:offset={intro_d:.3f}[vout];"
-        f"[0:a][3:a]acrossfade=d={half}:c1=tri:c2=tri[ax];"
-        f"[ax][1:a]acrossfade=d={half}:c1=tri:c2=tri[aout]",
-        "-map", "[vout]", "-map", "[aout]",
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
-        "-r", "30", "-pix_fmt", "yuv420p",
-        str(out),
-    ], timeout=180)
+    half    = max(0.25, min(duration/2, intro_d-0.05))
+    cc = ("color=c=0x7B2CBF:s=1920x1080:r=30,"
+          "drawbox=x=0:y=0:w=576:h=1080:color=0x7B2CBF:t=fill,"
+          "drawbox=x=576:y=0:w=461:h=1080:color=0x4285F4:t=fill,"
+          "drawbox=x=1037:y=0:w=346:h=1080:color=0x7EDFC3:t=fill,"
+          "drawbox=x=1383:y=0:w=537:h=1080:color=0xB7E4C7:t=fill")
+    _ff(["ffmpeg","-y","-i",str(intro),"-i",str(main),
+         "-f","lavfi","-t",f"{duration}","-i",cc,
+         "-f","lavfi","-t",f"{duration}","-i","anullsrc=r=48000:cl=stereo",
+         "-filter_complex",
+         "[0:v]fps=30,format=yuv420p,settb=AVTB[v0];"
+         "[1:v]fps=30,format=yuv420p,settb=AVTB[v1];"
+         "[2:v]fps=30,format=yuv420p,settb=AVTB[vc];"
+         f"[v0][vc]xfade=transition={wipe}:duration={half}:offset={max(intro_d-half,0):.3f}[vx];"
+         f"[vx][v1]xfade=transition={wipe}:duration={half}:offset={intro_d:.3f}[vout];"
+         f"[0:a][3:a]acrossfade=d={half}:c1=tri:c2=tri[ax];"
+         f"[ax][1:a]acrossfade=d={half}:c1=tri:c2=tri[aout]",
+         "-map","[vout]","-map","[aout]",
+         "-c:v","libx264","-preset","ultrafast","-crf","23",
+         "-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
+         "-r","30","-pix_fmt","yuv420p",str(out)], timeout=180)
     return Path(out)
 
 
@@ -451,79 +330,72 @@ def concat(parts, out, tmp):
         for p in parts:
             f.write(f"file '{Path(p).resolve()}'\n")
     try:
-        _ff(["ffmpeg", "-y", "-f", "concat", "-safe", "0",
-             "-i", str(lst), "-c", "copy", str(out)])
+        _ff(["ffmpeg","-y","-f","concat","-safe","0","-i",str(lst),"-c","copy",str(out)])
     except RuntimeError:
-        _ff(["ffmpeg", "-y", "-f", "concat", "-safe", "0",
-             "-i", str(lst),
-             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-             "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p",
-             str(out)])
+        _ff(["ffmpeg","-y","-f","concat","-safe","0","-i",str(lst),
+             "-c:v","libx264","-preset","ultrafast","-crf","23",
+             "-c:a","aac","-b:a","128k","-pix_fmt","yuv420p",str(out)])
     return Path(out)
 
 
 def preview_frame(course, unit_num, unit_title):
     if not INTRO_TPL.exists():
-        raise FileNotFoundError(
-            f"Intro template not found at: {INTRO_TPL}\n"
-            "Make sure assets/intro_template.mp4 is in your repo."
-        )
-    if INTRO_TPL.stat().st_size < 1000:
-        raise ValueError(
-            f"Intro template is too small ({INTRO_TPL.stat().st_size} bytes)."
-        )
+        raise FileNotFoundError(f"Intro template not found: {INTRO_TPL}")
     tmp_path = None
     try:
         fd, tmp_path = tempfile.mkstemp(suffix=".png")
         os.close(fd)
-        result = subprocess.run(
-            ["ffmpeg", "-y", "-i", str(INTRO_TPL),
-             "-ss", "3", "-vframes", "1", tmp_path],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"FFmpeg frame extract failed:\n{result.stderr[-300:]}")
-        if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) < 100:
-            raise RuntimeError("FFmpeg produced an empty frame.")
-        bg = Image.open(tmp_path).convert("RGBA")
-        bg.load()
+        subprocess.run(["ffmpeg","-y","-i",str(INTRO_TPL),"-ss","3","-vframes","1",tmp_path],
+                       capture_output=True, timeout=10)
+        bg = Image.open(tmp_path).convert("RGBA"); bg.load()
     finally:
         if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-    ovr  = render_intro_overlay(course, unit_num, unit_title)
-    comp = Image.alpha_composite(bg, ovr).convert("RGB")
-    buf  = BytesIO()
-    comp.save(buf, "JPEG", quality=90)
-    buf.seek(0)
+            try: os.unlink(tmp_path)
+            except OSError: pass
+    comp = Image.alpha_composite(bg, render_intro_overlay(course, unit_num, unit_title)).convert("RGB")
+    buf = BytesIO(); comp.save(buf, "JPEG", quality=90); buf.seek(0)
     return buf
 
 
+# ──────────────────────── GOOGLE DRIVE ───────────────────────────────────
+def _get_drive_service(creds_json):
+    creds = service_account.Credentials.from_service_account_info(
+        creds_json, scopes=["https://www.googleapis.com/auth/drive.file"])
+    return build("drive", "v3", credentials=creds, cache_discovery=False)
+
+
+def upload_to_drive(data: bytes, filename: str, folder_id, creds_json) -> str:
+    svc  = _get_drive_service(creds_json)
+    meta = {"name": filename}
+    if folder_id: meta["parents"] = [folder_id]
+    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="video/mp4",
+                              chunksize=10*1024*1024, resumable=True)
+    fid = svc.files().create(body=meta, media_body=media, fields="id").execute().get("id")
+    svc.permissions().create(fileId=fid, body={"type":"anyone","role":"reader"}).execute()
+    return f"https://drive.google.com/file/d/{fid}/view"
+
+
+def _load_gdrive_creds():
+    if st.session_state.get("gdrive_creds"):
+        return st.session_state["gdrive_creds"]
+    if GDRIVE_CREDS.exists():
+        try: return json.loads(GDRIVE_CREDS.read_text())
+        except Exception: pass
+    return None
+
+
+# ──────────────────────── STARTUP CHECK ──────────────────────────────────
 def _check_template():
     if not INTRO_TPL.exists():
-        st.error(
-            f"❌ **Intro template not found!**\n\n"
-            f"Expected: `{INTRO_TPL}`\n\n"
-            "Make sure `assets/intro_template.mp4` is committed to your repo."
-        )
-        st.stop()
-    size = INTRO_TPL.stat().st_size
-    if size < 10000:
-        st.error(
-            f"❌ **Intro template appears corrupt!**\n\n"
-            f"File size: {size} bytes (expected ~950 KB)"
-        )
-        st.stop()
-
+        st.error(f"❌ Intro template not found: `{INTRO_TPL}`"); st.stop()
+    if INTRO_TPL.stat().st_size < 10000:
+        st.error("❌ Intro template appears corrupt."); st.stop()
 
 _check_template()
 
 
-# ──────────────────────── CUSTOM CSS ──────────────────────────────────
-st.markdown("""
-<style>
+# ──────────────────────── CSS ─────────────────────────────────────────────
+st.markdown("""<style>
 .stApp{background:linear-gradient(135deg,#0a2a3c 0%,#0d3b54 30%,#0f4c6e 60%,#1a3a5c 100%)}
 header[data-testid="stHeader"]{background:rgba(10,42,60,.85);backdrop-filter:blur(10px)}
 .stButton>button[kind="primary"],.stDownloadButton>button{background:#60ccbe!important;color:#0a2a3c!important;border:none!important;border-radius:12px!important;font-weight:600!important;padding:.6rem 2rem!important}
@@ -539,219 +411,160 @@ section[data-testid="stFileUploader"]{border:2px dashed rgba(96,204,190,.4)!impo
 .ok h3{color:#60ccbe;margin-bottom:4px}
 hr{border-color:rgba(96,204,190,.15)!important}
 video{border-radius:12px;border:1px solid rgba(96,204,190,.2)}
-</style>
-""", unsafe_allow_html=True)
+</style>""", unsafe_allow_html=True)
 
-
-# ──────────────────────── LAYOUT ──────────────────────────────────────
-st.markdown("""
-<div style="display:flex;align-items:center;gap:16px;margin-bottom:8px">
+# ──────────────────────── HEADER ─────────────────────────────────────────
+st.markdown("""<div style="display:flex;align-items:center;gap:16px;margin-bottom:8px">
   <h1 style="margin:0;font-size:28px">🎬 SLC Video Merger</h1>
   <span style="background:#60ccbe;color:#0a2a3c;font-size:11px;font-weight:700;
         padding:3px 12px;border-radius:20px;text-transform:uppercase">Fast</span>
-</div>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<div style="text-align:center;margin:8px 0 24px">
+</div>""", unsafe_allow_html=True)
+st.markdown("""<div style="text-align:center;margin:8px 0 24px">
   <span class="fb">🎬 Custom Intro</span><span class="fa">→</span>
-  <span class="fb">🟪🟦🟩⬜ 4-Colour Transition</span><span class="fa">→</span>
+  <span class="fb">🟪🟦🟩⬜ Transition</span><span class="fa">→</span>
   <span class="fb">📹 NotebookLM Video</span><span class="fa">→</span>
   <span class="fb">🔚 Outro</span>
-</div>
-""", unsafe_allow_html=True)
+</div>""", unsafe_allow_html=True)
 
-# ── 1  INTRO ──────────────────────────────────────────────────────────
-st.markdown(
-    '<div><span class="sn">1</span><span class="st">Intro Customisation</span></div>',
-    unsafe_allow_html=True,
-)
-course_name = st.text_input(
-    "Course Name",
-    placeholder="e.g. Level 3 Diploma in Sports Development (RQF)",
-)
-c1, c2 = st.columns(2)
+# ── 1  INTRO ─────────────────────────────────────────────────────────────
+st.markdown('<div><span class="sn">1</span><span class="st">Intro Customisation</span></div>', unsafe_allow_html=True)
+course_name = st.text_input("Course Name", placeholder="e.g. Level 3 Diploma in Sports Development (RQF)")
+c1, _ = st.columns(2)
 with c1:
-    unit_number = st.text_input(
-        "Unit / Chapter Number",
-        placeholder="e.g. UNIT 03 | CHAPTER 06",
-    )
+    unit_number = st.text_input("Unit / Chapter Number", placeholder="e.g. UNIT 03 | CHAPTER 06")
 if st.button("👁 Preview Intro", type="secondary"):
     if course_name and unit_number:
         with st.spinner("Rendering…"):
-            st.image(
-                preview_frame(course_name, unit_number, ""),
-                caption="Intro Preview",
-                use_container_width=True,
-            )
+            st.image(preview_frame(course_name, unit_number, ""), caption="Intro Preview", use_container_width=True)
     else:
         st.warning("Enter course name and unit number first.")
-
 st.markdown("---")
 
-# ── 2  UPLOAD NOTEBOOKLM VIDEO ────────────────────────────────────────
-st.markdown(
-    '<div><span class="sn">2</span><span class="st">Upload NotebookLM Video</span></div>',
-    unsafe_allow_html=True,
-)
-vid = st.file_uploader(
-    "Upload your NotebookLM video",
-    type=["mp4", "mov", "webm", "avi", "mkv"],
-    help="MP4 / MOV / WebM — up to 500 MB",
-)
+# ── 2  VIDEO UPLOAD ──────────────────────────────────────────────────────
+st.markdown('<div><span class="sn">2</span><span class="st">Upload NotebookLM Video</span></div>', unsafe_allow_html=True)
+vid = st.file_uploader("Upload your NotebookLM video", type=["mp4","mov","webm","avi","mkv"], help="Up to 500 MB")
 if vid:
-    st.success(f"📁 **{vid.name}** — {vid.size / 1048576:.1f} MB")
-
+    st.success(f"📁 **{vid.name}** — {vid.size/1048576:.1f} MB")
 st.markdown("---")
 
-# ── 2b  SLC LOGO UPLOAD ───────────────────────────────────────────────
-st.markdown(
-    '<div><span class="sn">✦</span>'
-    '<span class="st">SLC Logo (replaces NotebookLM badge)</span></div>',
-    unsafe_allow_html=True,
-)
-st.markdown(
-    '<p style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:10px">'
-    'Upload the SLC logo PNG. Appears bottom-right on every slide at the correct '
-    'size with the natural proportions preserved.</p>',
-    unsafe_allow_html=True,
-)
-logo_upload = st.file_uploader(
-    "SLC Logo PNG", type=["png"], help="Transparent PNG preferred.",
-)
-if logo_upload is not None:
+# ── 2b  SLC LOGO ─────────────────────────────────────────────────────────
+st.markdown('<div><span class="sn">✦</span><span class="st">SLC Logo (replaces NotebookLM badge)</span></div>', unsafe_allow_html=True)
+logo_upload = st.file_uploader("SLC Logo PNG", type=["png"], help="Transparent PNG preferred")
+if logo_upload:
     SLC_LOGO.parent.mkdir(parents=True, exist_ok=True)
     SLC_LOGO.write_bytes(logo_upload.getvalue())
     st.success("✅ Logo saved.")
 elif SLC_LOGO.exists():
     st.info("ℹ️ Using existing logo at `assets/slc_logo.png`.")
 else:
-    st.warning("⚠️ No logo uploaded — watermark zones will be covered with white only.")
-
+    st.warning("⚠️ No logo — watermarks covered with white only.")
 st.markdown("---")
 
-# ── 3  MERGE ──────────────────────────────────────────────────────────
-st.markdown(
-    '<div><span class="sn">3</span><span class="st">Generate Final Video</span></div>',
-    unsafe_allow_html=True,
-)
-st.markdown(
-    '<p style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:16px">'
-    'Merges custom intro + 4-colour transition + NotebookLM video '
-    '(all watermarks replaced) + standard outro.</p>',
-    unsafe_allow_html=True,
-)
+# ── 2c  GOOGLE DRIVE ─────────────────────────────────────────────────────
+st.markdown('<div><span class="sn">☁</span><span class="st">Google Drive Upload (Optional)</span></div>', unsafe_allow_html=True)
+st.markdown('<p style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:10px">'
+    'Upload a Google <strong>service-account JSON</strong> to automatically save the finished video to Drive. '
+    'To get one: Google Cloud Console → IAM &amp; Admin → Service Accounts → your account → Keys → Add Key → JSON.</p>',
+    unsafe_allow_html=True)
+gdrive_json_up = st.file_uploader("Service Account JSON", type=["json"])
+if gdrive_json_up:
+    try:
+        st.session_state["gdrive_creds"] = json.loads(gdrive_json_up.read().decode())
+        st.success("✅ Service account loaded.")
+    except Exception as e:
+        st.error(f"Invalid JSON: {e}")
+elif _load_gdrive_creds():
+    st.info("ℹ️ Using credentials from `assets/gdrive_credentials.json`.")
+gdrive_folder_id = st.text_input("Google Drive Folder ID (optional)",
+    placeholder="Paste the ID from the Drive folder URL — leave blank for My Drive")
+st.markdown("---")
+
+# ── 3  MERGE ─────────────────────────────────────────────────────────────
+st.markdown('<div><span class="sn">3</span><span class="st">Generate Final Video</span></div>', unsafe_allow_html=True)
+st.markdown('<p style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:16px">'
+    'Merges intro + transition + NotebookLM video (all watermarks covered with rounded boxes) + outro.</p>',
+    unsafe_allow_html=True)
 
 if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
-    if not course_name:
-        st.error("Enter a course name.")
-        st.stop()
-    if not unit_number:
-        st.error("Enter a unit number.")
-        st.stop()
-    if not vid:
-        st.error("Upload a video.")
-        st.stop()
+    for label, val in [("course name", course_name), ("unit number", unit_number)]:
+        if not val: st.error(f"Enter a {label}."); st.stop()
+    if not vid: st.error("Upload a video."); st.stop()
 
     t0 = time.time()
-
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         bar = st.progress(0, "Starting…")
         msg = st.empty()
-
         try:
             raw = tmp / "raw.mp4"
             raw.write_bytes(vid.getvalue())
-
-            # Detect source resolution BEFORE normalising
             src_res = _probe_resolution(str(raw))
 
-            msg.info("⏳ **Step 1 / 4** — Building intro, outro and normalising video…")
-            bar.progress(10, "Processing in parallel…")
-
-            results = {}
-            errors  = {}
+            msg.info("⏳ **Step 1 / 4** — Building intro, outro and normalising…")
+            bar.progress(10)
+            results, errors = {}, {}
 
             def _job(name, fn, *args):
-                try:
-                    results[name] = fn(*args)
-                except Exception as e:
-                    errors[name] = e
+                try: results[name] = fn(*args)
+                except Exception as e: errors[name] = e
 
             with ThreadPoolExecutor(max_workers=3) as pool:
                 pool.submit(_job, "intro", make_intro, course_name, unit_number, "", tmp)
                 pool.submit(_job, "outro", make_outro, tmp)
-                pool.submit(_job, "norm",  normalise,  raw, tmp / "norm.mp4")
+                pool.submit(_job, "norm",  normalise,  raw, tmp/"norm.mp4")
 
             if errors:
-                raise RuntimeError(
-                    "; ".join(f"{k}: {v}" for k, v in errors.items())
-                )
+                raise RuntimeError("; ".join(f"{k}: {v}" for k,v in errors.items()))
 
-            msg.info(
-                f"⏳ **Step 2 / 4** — Replacing NotebookLM branding "
-                f"({src_res[0]}×{src_res[1]} source)…"
-            )
-            bar.progress(40, "Replacing watermarks…")
-
+            msg.info(f"⏳ **Step 2 / 4** — Replacing NotebookLM branding ({src_res[0]}×{src_res[1]})…")
+            bar.progress(40)
             norm_clean = remove_notebooklm_watermark(
-                results["norm"],
-                tmp / "norm_clean.mp4",
-                src_resolution=src_res,
-                progress_cb=lambda s: msg.info(f"⏳ **Step 2 / 4** — {s}"),
-            )
+                results["norm"], tmp/"norm_clean.mp4", src_res, tmp,
+                progress_cb=lambda s: msg.info(f"⏳ **Step 2 / 4** — {s}"))
 
             msg.info("⏳ **Step 3 / 4** — Adding 4-colour transition…")
-            bar.progress(65, "Creating transition…")
-
-            main_with_transition = add_notebooklm_transition(
-                results["intro"], norm_clean, tmp / "intro_and_main.mp4",
-            )
+            bar.progress(65)
+            with_trans = add_notebooklm_transition(results["intro"], norm_clean, tmp/"intro_and_main.mp4")
 
             msg.info("⏳ **Step 4 / 4** — Merging final segments…")
-            bar.progress(85, "Merging…")
+            bar.progress(85)
+            final = concat([with_trans, results["outro"]], tmp/"final.mp4", tmp)
 
-            final = concat(
-                [main_with_transition, results["outro"]],
-                tmp / "final.mp4", tmp,
-            )
-
-            bar.progress(100, "Done!")
+            bar.progress(100)
             secs = time.time() - t0
             data = final.read_bytes()
             mb   = len(data) / 1048576
+            msg.empty(); bar.empty()
 
-            msg.empty()
-            bar.empty()
-
-            st.markdown(f"""
-            <div class="ok">
+            st.markdown(f"""<div class="ok">
                 <div style="font-size:48px;margin-bottom:8px">✅</div>
                 <h3>Video Ready!</h3>
                 <p style="color:rgba(255,255,255,.5);font-size:13px">
-                    Processed in {secs:.1f}s &nbsp;•&nbsp; {mb:.1f} MB
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
+                    {secs:.1f}s &nbsp;•&nbsp; {mb:.1f} MB</p>
+            </div>""", unsafe_allow_html=True)
 
-            st.markdown(
-                '<div style="margin:16px 0"><span class="sn">▶</span>'
-                '<span class="st">Preview</span></div>',
-                unsafe_allow_html=True,
-            )
+            st.markdown('<div style="margin:16px 0"><span class="sn">▶</span><span class="st">Preview</span></div>', unsafe_allow_html=True)
             st.video(data, format="video/mp4")
 
-            safec    = course_name[:30].replace(" ", "_")
-            safeu    = unit_number.replace(" ", "_").replace("|", "")
+            safec    = course_name[:30].replace(" ","_")
+            safeu    = unit_number.replace(" ","_").replace("|","")
             filename = f"SLC_Video_{safec}_{safeu}.mp4"
 
-            st.download_button(
-                "⬇ Download Final Video", data, filename,
-                "video/mp4", use_container_width=True,
-            )
+            st.download_button("⬇ Download Final Video", data, filename, "video/mp4", use_container_width=True)
+
+            # ── Google Drive upload ───────────────────────────────────
+            creds = _load_gdrive_creds()
+            if creds and GDRIVE_AVAILABLE:
+                st.markdown("---")
+                st.markdown('<div style="margin:8px 0"><span class="sn">☁</span><span class="st">Save to Google Drive</span></div>', unsafe_allow_html=True)
+                if st.button("☁ Upload to Google Drive", use_container_width=True):
+                    with st.spinner("Uploading to Google Drive…"):
+                        try:
+                            link = upload_to_drive(data, filename, gdrive_folder_id.strip() or None, creds)
+                            st.success(f"✅ Uploaded! [Open in Drive]({link})")
+                        except Exception as e:
+                            st.error(f"Upload failed: {e}")
 
         except Exception as e:
-            bar.empty()
-            msg.empty()
+            bar.empty(); msg.empty()
             st.error(f"**Processing failed:**\n\n```\n{e}\n```")

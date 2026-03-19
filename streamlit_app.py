@@ -7,7 +7,11 @@ FFmpeg only does: overlay PNG on video, normalise, transitions, concatenate.
 Watermark removal is resolution-aware:
   • 1920×1080 source → tight coordinates measured from that native resolution
   • 1280×720  source → tight coordinates scaled 1.5× after normalise()
-  • Other resolutions → falls back to the 1920×1080 set (closest match)
+  • Other resolutions → falls back to the 1920×1080 set
+
+Logo overlay uses scale=-1:LOGO_H so the natural aspect ratio is always
+preserved — no stretching or squashing regardless of the PNG dimensions.
+The logo is anchored to the bottom-right corner (W-w-pad : H-h-pad).
 """
 
 import os
@@ -29,36 +33,37 @@ BASE_DIR  = Path(__file__).parent
 INTRO_TPL = BASE_DIR / "assets" / "intro_template.mp4"
 SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 
-# ── Per-resolution watermark coordinates (all in 1920×1080 space) ───────
-#
-# Each entry is a dict with:
-#   top_x/y/w/h   — Zone 1: top-centre "NotebookLM" text (title slide only)
-#   br_x/y/w/h    — Zone 2: bottom-right badge (all content slides)
-#   logo_w/h      — SLC logo size (centred inside the br box)
-#
-# Values are measured from actual video frames after normalise() scales
-# everything to 1920×1080.
+# ── Per-resolution watermark cover boxes (in 1920×1080 space) ───────────
+# Only the white drawboxes are resolution-specific.
+# The logo overlay is resolution-independent (see LOGO_* below).
 
 WM_COORDS = {
+    # 1920×1080 native source — measured directly from video frames
     (1920, 1080): dict(
-        top_x=810,  top_y=148, top_w=280, top_h=65,   # was 55
-        br_x=1450,  br_y=900,  br_w=277,  br_h=85,    # was 71
-        logo_w=140, logo_h=46,
+        top_x=810,  top_y=148, top_w=280, top_h=55,
+        br_x=1450,  br_y=900,  br_w=277,  br_h=71,
     ),
+    # 1280×720 source — all values scaled 1.5× by normalise()
     (1280, 720): dict(
-        top_x=806,  top_y=68,  top_w=285, top_h=55,   # was 45
-        br_x=1654,  br_y=984,  br_w=210,  br_h=52,    # was 42
-        logo_w=120, logo_h=32,
+        top_x=806,  top_y=68,  top_w=285, top_h=45,
+        br_x=1650,  br_y=980,  br_w=215,  br_h=50,
     ),
 }
 
-# Fallback if source resolution doesn't match either entry above
 WM_FALLBACK = WM_COORDS[(1920, 1080)]
 
-# How many seconds the top-centre watermark is visible (title slide only)
-WM_TOP_DURATION = 20
+# ── Logo overlay (resolution-independent) ───────────────────────────────
+# Scaled to LOGO_H height with WIDTH CALCULATED AUTOMATICALLY by FFmpeg
+# using scale=-1:LOGO_H — this preserves the natural aspect ratio of the
+# PNG so the logo never looks fat or stretched.
+# Anchored to bottom-right: overlay=x=W-w-LOGO_PAD:y=H-h-LOGO_PAD
+LOGO_H   = 52    # pixels tall in 1920×1080 output — adjust to taste
+LOGO_PAD = 20    # pixels from right and bottom edges
 
-# ── End-card cover (same for all resolutions — always full-screen) ───────
+# ── Top-centre watermark (title slide only) ─────────────────────────────
+WM_TOP_DURATION = 20   # seconds
+
+# ── End-card centre cover (same for all resolutions) ────────────────────
 WM_EC_X = 448
 WM_EC_Y = 310
 WM_EC_W = 1024
@@ -257,10 +262,7 @@ def _has_audio(path):
 
 
 def _detect_end_card_start(path):
-    """
-    Scan the last 20 s for the first near-pure-white frame (end card).
-    Falls back to (total - 9) if not found.
-    """
+    """Scan the last 20 s for the first near-pure-white frame (end card)."""
     total     = _probe_duration(path)
     scan_from = max(0.0, total - 20.0)
     fallback  = max(0.0, total - 9.0)
@@ -318,27 +320,25 @@ def remove_notebooklm_watermark(inp, out, src_resolution, progress_cb=None):
     """
     Cover all NotebookLM branding in one FFmpeg pass.
 
-    Uses tight coordinates matched to the source video resolution so the
-    white boxes are exactly the size of the watermark — never bigger.
+    Zone 1 — Top-centre (title slide, first WM_TOP_DURATION seconds only):
+        Tight white box sized exactly to the badge for each source resolution.
 
-    Zone 1 — Top-centre (title slide, first WM_TOP_DURATION seconds only)
-    Zone 2 — Bottom-right badge (all content slides, every frame)
-              White box + SLC logo centred inside it
-    Zone 3 — End-card full-screen (dynamically detected start time)
+    Zone 2 — Bottom-right badge (all content slides, every frame):
+        Tight white box + SLC logo.
+        Logo uses scale=-1:LOGO_H so the natural aspect ratio is preserved.
+        Anchored to bottom-right corner via overlay=x=W-w-pad:y=H-h-pad.
+
+    Zone 3 — End-card full-screen (dynamically detected start time):
+        White box covers the centred notebooklm.google.com icon + URL.
     """
     inp_str = str(inp)
     out_str = str(out)
 
-    # Pick coordinates for this source resolution
     coords = WM_COORDS.get(src_resolution, WM_FALLBACK)
-    tx  = coords["top_x"];  ty  = coords["top_y"]
-    tw  = coords["top_w"];  th  = coords["top_h"]
-    brx = coords["br_x"];   bry = coords["br_y"]
-    brw = coords["br_w"];   brh = coords["br_h"]
-    lw  = coords["logo_w"]; lh  = coords["logo_h"]
-    # Centre logo inside the white box
-    lx  = brx + (brw - lw) // 2
-    ly  = bry + (brh - lh) // 2
+    tx  = coords["top_x"]; ty  = coords["top_y"]
+    tw  = coords["top_w"]; th  = coords["top_h"]
+    brx = coords["br_x"];  bry = coords["br_y"]
+    brw = coords["br_w"];  brh = coords["br_h"]
 
     if progress_cb:
         progress_cb("Detecting end-card start time…")
@@ -362,10 +362,14 @@ def remove_notebooklm_watermark(inp, out, src_resolution, progress_cb=None):
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
     if use_logo:
+        # scale=-1:LOGO_H → width auto-calculated to preserve aspect ratio
+        # overlay=x=W-w-pad:y=H-h-pad → anchored to bottom-right corner
         filter_complex = (
             f"[0:v]{WM_TOP},{WM_BR},{WM_EC}[cov];"
-            f"[1:v]scale={lw}:{lh}[logo];"
-            f"[cov][logo]overlay=x={lx}:y={ly}[vout]"
+            f"[1:v]scale=-1:{LOGO_H}[logo];"
+            f"[cov][logo]overlay="
+            f"x=W-w-{LOGO_PAD}:y=H-h-{LOGO_PAD}"
+            f"[vout]"
         )
         cmd = [
             "ffmpeg", "-y",
@@ -598,8 +602,8 @@ st.markdown(
 )
 st.markdown(
     '<p style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:10px">'
-    'Upload the SLC logo PNG. Replaces the NotebookLM badge bottom-right '
-    'on every slide. Logo size auto-matches the watermark for each video resolution.</p>',
+    'Upload the SLC logo PNG. Appears bottom-right on every slide at the correct '
+    'size with the natural proportions preserved.</p>',
     unsafe_allow_html=True,
 )
 logo_upload = st.file_uploader(
@@ -608,7 +612,7 @@ logo_upload = st.file_uploader(
 if logo_upload is not None:
     SLC_LOGO.parent.mkdir(parents=True, exist_ok=True)
     SLC_LOGO.write_bytes(logo_upload.getvalue())
-    st.success("✅ Logo saved — will appear bottom-right on every slide.")
+    st.success("✅ Logo saved.")
 elif SLC_LOGO.exists():
     st.info("ℹ️ Using existing logo at `assets/slc_logo.png`.")
 else:

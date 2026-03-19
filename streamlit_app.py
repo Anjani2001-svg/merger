@@ -40,17 +40,15 @@ SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 # everything to 1920×1080.
 
 WM_COORDS = {
-    # 1920×1080 native source
     (1920, 1080): dict(
-        top_x=810,  top_y=148, top_w=280, top_h=55,
-        br_x=1450,  br_y=900,  br_w=277,  br_h=71,
-        logo_w=140, logo_h=50,
+        top_x=810,  top_y=148, top_w=280, top_h=65,   # was 55
+        br_x=1450,  br_y=900,  br_w=277,  br_h=85,    # was 71
+        logo_w=140, logo_h=46,
     ),
-    # 1280×720 source — scaled 1.5× by normalise()
     (1280, 720): dict(
-        top_x=806,  top_y=68,  top_w=285, top_h=45,
-        br_x=1654,  br_y=984,  br_w=210,  br_h=42,
-        logo_w=100, logo_h=32,
+        top_x=806,  top_y=68,  top_w=285, top_h=55,   # was 45
+        br_x=1654,  br_y=984,  br_w=210,  br_h=52,    # was 42
+        logo_w=120, logo_h=32,
     ),
 }
 

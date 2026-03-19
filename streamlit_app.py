@@ -4,10 +4,10 @@ SLC Video Merger – Streamlit Edition
 All text is rendered by Pillow (no FFmpeg drawtext = no escaping bugs).
 FFmpeg only does: overlay PNG on video, normalise, transitions, concatenate.
 
-NotebookLM watermark zones covered (works for both 1920x1080 and 1280x720 sources):
-  1. Top-centre  (title slide only, first 20s)
-  2. Bottom-right badge (all content slides) — white box + SLC logo centred
-  3. End-card full-screen branding            — white box, dynamically detected
+Watermark removal is resolution-aware:
+  • 1920×1080 source → tight coordinates measured from that native resolution
+  • 1280×720  source → tight coordinates scaled 1.5× after normalise()
+  • Other resolutions → falls back to the 1920×1080 set (closest match)
 """
 
 import os
@@ -29,33 +29,38 @@ BASE_DIR  = Path(__file__).parent
 INTRO_TPL = BASE_DIR / "assets" / "intro_template.mp4"
 SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 
-# ── Zone 1: Top-centre watermark ────────────────────────────────────────
-# Covers BOTH 1920x1080 native (badge at y≈148) and 1280x720 scaled
-# (badge at y≈66) with a single generous box. Background is near-white
-# so a larger box is completely invisible.
-WM_TOP_X = 790
-WM_TOP_Y = 58
-WM_TOP_W = 320
-WM_TOP_H = 155
-WM_TOP_DURATION = 20   # seconds — top bar only on the opening title slide
+# ── Per-resolution watermark coordinates (all in 1920×1080 space) ───────
+#
+# Each entry is a dict with:
+#   top_x/y/w/h   — Zone 1: top-centre "NotebookLM" text (title slide only)
+#   br_x/y/w/h    — Zone 2: bottom-right badge (all content slides)
+#   logo_w/h      — SLC logo size (centred inside the br box)
+#
+# Values are measured from actual video frames after normalise() scales
+# everything to 1920×1080.
 
-# ── Zone 2: Bottom-right badge ──────────────────────────────────────────
-# Covers BOTH 1920x1080 native (badge at y≈900-971)
-# and 1280x720 scaled (badge at y≈996-1014) with one generous box.
-# White box blends with the near-white slide background → invisible.
-WM_BR_X = 1430
-WM_BR_Y = 878
-WM_BR_W = 470
-WM_BR_H = 155
+WM_COORDS = {
+    # 1920×1080 native source
+    (1920, 1080): dict(
+        top_x=810,  top_y=148, top_w=280, top_h=55,
+        br_x=1450,  br_y=900,  br_w=277,  br_h=71,
+        logo_w=140, logo_h=46,
+    ),
+    # 1280×720 source — scaled 1.5× by normalise()
+    (1280, 720): dict(
+        top_x=806,  top_y=68,  top_w=285, top_h=45,
+        br_x=1654,  br_y=984,  br_w=210,  br_h=42,
+        logo_w=120, logo_h=32,
+    ),
+}
 
-# SLC logo — centred inside the white box
-LOGO_W = 200
-LOGO_H = 66
-LOGO_X = WM_BR_X + (WM_BR_W - LOGO_W) // 2   # 1565
-LOGO_Y = WM_BR_Y + (WM_BR_H - LOGO_H) // 2   # 922
+# Fallback if source resolution doesn't match either entry above
+WM_FALLBACK = WM_COORDS[(1920, 1080)]
 
-# ── Zone 3: End-card centre cover ───────────────────────────────────────
-# Covers the full notebooklm.google.com icon + URL text.
+# How many seconds the top-centre watermark is visible (title slide only)
+WM_TOP_DURATION = 20
+
+# ── End-card cover (same for all resolutions — always full-screen) ───────
 WM_EC_X = 448
 WM_EC_Y = 310
 WM_EC_W = 1024
@@ -180,6 +185,24 @@ def _ff(cmd, timeout=600):
     return r
 
 
+def _probe_resolution(path):
+    """Return (width, height) of the first video stream."""
+    r = subprocess.run([
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=p=0",
+        str(path),
+    ], capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        return (1920, 1080)
+    parts = r.stdout.strip().split(",")
+    try:
+        return (int(parts[0]), int(parts[1]))
+    except (ValueError, IndexError):
+        return (1920, 1080)
+
+
 def make_intro(course, unit_num, unit_title, tmp):
     png = str(tmp / "intro_overlay.png")
     out = str(tmp / "intro.mp4")
@@ -237,8 +260,7 @@ def _has_audio(path):
 
 def _detect_end_card_start(path):
     """
-    Scan the last 20 s of the video to find where the NotebookLM end card
-    begins (near-pure-white full-screen background, brightness > 95%).
+    Scan the last 20 s for the first near-pure-white frame (end card).
     Falls back to (total - 9) if not found.
     """
     total     = _probe_duration(path)
@@ -294,23 +316,31 @@ def normalise(inp, out):
     return Path(out)
 
 
-def remove_notebooklm_watermark(inp, out, progress_cb=None):
+def remove_notebooklm_watermark(inp, out, src_resolution, progress_cb=None):
     """
     Cover all NotebookLM branding in one FFmpeg pass.
-    Works for both 1920x1080 native and 1280x720 source videos (after normalise).
 
-    Zone 1 — Top-centre (title slide, first WM_TOP_DURATION seconds only):
-        Generous white box covers badge at both y≈66 (720p scaled) and y≈148 (1080p).
+    Uses tight coordinates matched to the source video resolution so the
+    white boxes are exactly the size of the watermark — never bigger.
 
-    Zone 2 — Bottom-right badge (all content slides, every frame):
-        Generous white box covers badge at both positions.
-        SLC logo centred inside the box.
-
-    Zone 3 — End-card (dynamically detected start time):
-        White box covers centred notebooklm.google.com icon + URL.
+    Zone 1 — Top-centre (title slide, first WM_TOP_DURATION seconds only)
+    Zone 2 — Bottom-right badge (all content slides, every frame)
+              White box + SLC logo centred inside it
+    Zone 3 — End-card full-screen (dynamically detected start time)
     """
     inp_str = str(inp)
     out_str = str(out)
+
+    # Pick coordinates for this source resolution
+    coords = WM_COORDS.get(src_resolution, WM_FALLBACK)
+    tx  = coords["top_x"];  ty  = coords["top_y"]
+    tw  = coords["top_w"];  th  = coords["top_h"]
+    brx = coords["br_x"];   bry = coords["br_y"]
+    brw = coords["br_w"];   brh = coords["br_h"]
+    lw  = coords["logo_w"]; lh  = coords["logo_h"]
+    # Centre logo inside the white box
+    lx  = brx + (brw - lw) // 2
+    ly  = bry + (brh - lh) // 2
 
     if progress_cb:
         progress_cb("Detecting end-card start time…")
@@ -319,11 +349,11 @@ def remove_notebooklm_watermark(inp, out, progress_cb=None):
     enable_ec = f"gte(t\\,{ecs:.2f})"
 
     WM_TOP = (
-        f"drawbox=x={WM_TOP_X}:y={WM_TOP_Y}:w={WM_TOP_W}:h={WM_TOP_H}"
+        f"drawbox=x={tx}:y={ty}:w={tw}:h={th}"
         f":color=white@1:t=fill:enable='lte(t\\,{WM_TOP_DURATION})'"
     )
     WM_BR = (
-        f"drawbox=x={WM_BR_X}:y={WM_BR_Y}:w={WM_BR_W}:h={WM_BR_H}"
+        f"drawbox=x={brx}:y={bry}:w={brw}:h={brh}"
         f":color=white@1:t=fill"
     )
     WM_EC = (
@@ -336,8 +366,8 @@ def remove_notebooklm_watermark(inp, out, progress_cb=None):
     if use_logo:
         filter_complex = (
             f"[0:v]{WM_TOP},{WM_BR},{WM_EC}[cov];"
-            f"[1:v]scale={LOGO_W}:{LOGO_H}[logo];"
-            f"[cov][logo]overlay=x={LOGO_X}:y={LOGO_Y}[vout]"
+            f"[1:v]scale={lw}:{lh}[logo];"
+            f"[cov][logo]overlay=x={lx}:y={ly}[vout]"
         )
         cmd = [
             "ffmpeg", "-y",
@@ -570,8 +600,8 @@ st.markdown(
 )
 st.markdown(
     '<p style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:10px">'
-    'Upload the SLC logo PNG. Replaces the NotebookLM badge in the '
-    '<strong>bottom-right corner on every slide</strong> including the end card.</p>',
+    'Upload the SLC logo PNG. Replaces the NotebookLM badge bottom-right '
+    'on every slide. Logo size auto-matches the watermark for each video resolution.</p>',
     unsafe_allow_html=True,
 )
 logo_upload = st.file_uploader(
@@ -622,6 +652,9 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
             raw = tmp / "raw.mp4"
             raw.write_bytes(vid.getvalue())
 
+            # Detect source resolution BEFORE normalising
+            src_res = _probe_resolution(str(raw))
+
             msg.info("⏳ **Step 1 / 4** — Building intro, outro and normalising video…")
             bar.progress(10, "Processing in parallel…")
 
@@ -645,13 +678,15 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
                 )
 
             msg.info(
-                "⏳ **Step 2 / 4** — Detecting end-card & replacing NotebookLM branding…"
+                f"⏳ **Step 2 / 4** — Replacing NotebookLM branding "
+                f"({src_res[0]}×{src_res[1]} source)…"
             )
             bar.progress(40, "Replacing watermarks…")
 
             norm_clean = remove_notebooklm_watermark(
                 results["norm"],
                 tmp / "norm_clean.mp4",
+                src_resolution=src_res,
                 progress_cb=lambda s: msg.info(f"⏳ **Step 2 / 4** — {s}"),
             )
 

@@ -30,9 +30,11 @@ SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 # Measured from actual video:
 #   1920×1080 native: x=1733, y=970, w=163, h=87
 #   1280×720 source:  scaled down by 1/1.5
+# Union box — covers badge position across ALL known NotebookLM video styles.
+# Background is near-white so a larger box is completely invisible.
 WM_COORDS = {
-    (1920, 1080): dict(br_x=1662, br_y=980, br_w=233, br_h=89),
-    (1280, 720):  dict(br_x=1108, br_y=653, br_w=156, br_h=60),
+    (1920, 1080): dict(br_x=1450, br_y=900, br_w=446, br_h=167),
+    (1280, 720):  dict(br_x=966,  br_y=600, br_w=298, br_h=112),
 }
 WM_FALLBACK = WM_COORDS[(1920, 1080)]
 

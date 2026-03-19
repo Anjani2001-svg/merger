@@ -50,7 +50,7 @@ WM_COORDS = {
     (1280, 720): dict(
         top_x=806,  top_y=68,  top_w=285, top_h=45,
         br_x=1654,  br_y=984,  br_w=210,  br_h=42,
-        logo_w=120, logo_h=32,
+        logo_w=100, logo_h=32,
     ),
 }
 

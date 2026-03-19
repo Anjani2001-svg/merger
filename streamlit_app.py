@@ -44,7 +44,7 @@ WM_COORDS = {
     (1920, 1080): dict(
         top_x=810,  top_y=148, top_w=280, top_h=55,
         br_x=1450,  br_y=900,  br_w=277,  br_h=71,
-        logo_w=140, logo_h=46,
+        logo_w=140, logo_h=50,
     ),
     # 1280×720 source — scaled 1.5× by normalise()
     (1280, 720): dict(

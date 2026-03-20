@@ -506,9 +506,15 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, s
     # ── Get drive ID and folder ID for upload session ─────────────────
     remote = folder.get("remoteItem", {})
     if remote:
-        # Shared item — use the remote drive/item IDs
-        drive_id  = remote.get("parentReference", {}).get("driveId", "")
+        # Shared item from another drive (SharePoint/Teams)
+        # driveId can be in remoteItem directly or in its parentReference
+        drive_id  = (remote.get("parentReference", {}).get("driveId")
+                     or remote.get("parentReference", {}).get("driveId", ""))
         folder_id = remote.get("id", "")
+        if not drive_id:
+            # Try top-level parentReference
+            drive_id = folder.get("parentReference", {}).get("driveId", "")
+        _cb(f"📁 Shared folder — drive: {drive_id[:20]}… id: {folder_id[:20]}…")
         session_base = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{folder_id}"
     else:
         parent_drive = folder.get("parentReference", {}).get("driveId", "")
@@ -522,10 +528,23 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, s
     _cb("⬆️ Creating upload session…")
     session_url  = f"{session_base}:/{filename}:/createUploadSession"
     session_body = {"item": {"@microsoft.graph.conflictBehavior": "rename"}}
-    r2 = requests.post(session_url,
-                       headers=headers, json=session_body, timeout=30)
+    # Must include Authorization header for upload session creation
+    r2 = requests.post(session_url, headers=headers,
+                       json=session_body, timeout=30)
     if r2.status_code not in (200, 201):
-        return False, f"Could not create upload session (HTTP {r2.status_code}): {r2.text[:300]}"
+        # If shared drive upload fails, try uploading to personal drive instead
+        _cb(f"⚠️ Could not use shared drive (HTTP {r2.status_code}), trying personal drive…")
+        personal_url  = f"https://graph.microsoft.com/v1.0/me/drive/root:/{filename}:/createUploadSession"
+        r2b = requests.post(personal_url, headers=headers,
+                            json=session_body, timeout=30)
+        if r2b.status_code not in (200, 201):
+            return False, (
+                f"Could not create upload session.\n\n"
+                f"Shared drive error (HTTP {r2.status_code}): {r2.text[:200]}\n\n"
+                f"Personal drive error (HTTP {r2b.status_code}): {r2b.text[:200]}"
+            )
+        _cb("📁 Uploading to personal OneDrive root instead…")
+        r2 = r2b
 
     upload_url = r2.json()["uploadUrl"]
 

@@ -113,6 +113,33 @@ def _make_logo_composite(logo_path, thank_you_text, box, font_path,
     return Path(str(logo_path)).parent / "logo_composite.png"
 
 
+def _make_ec_png(path, W=1920, H=1080):
+    """
+    Render the end-card cover PNG:
+    rounded white box + centred 'Thank You' text in SLC teal.
+    """
+    img  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Rounded white box (same dimensions as WM_EC)
+    draw.rounded_rectangle(
+        [WM_EC_X, WM_EC_Y, WM_EC_X+WM_EC_W, WM_EC_Y+WM_EC_H],
+        radius=EC_RADIUS, fill=(255, 255, 255, 255))
+
+    # "Thank You" text centred in the box
+    fn   = _ft(BOLD, 72)
+    text = "Thank You"
+    cx   = WM_EC_X + WM_EC_W // 2
+    cy   = WM_EC_Y + WM_EC_H // 2
+    # Shadow for depth
+    draw.text((cx+3, cy+3), text, fill=(0, 0, 0, 40), font=fn, anchor="mm")
+    # Main text in SLC teal
+    draw.text((cx, cy), text, fill=TEAL+(255,), font=fn, anchor="mm")
+
+    img.save(str(path), "PNG")
+    return path
+
+
 def _make_box_png(boxes, path, W=1920, H=1080, colour=(255,255,255,255)):
     img  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -261,7 +288,7 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
     enable_ec = f"gte(t\\,{ecs:.2f})"
 
     ec_png = tmp/"wm_ec.png"
-    _make_box_png([(WM_EC_X,WM_EC_Y,WM_EC_W,WM_EC_H,EC_RADIUS)], ec_png)
+    _make_ec_png(ec_png)
 
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 

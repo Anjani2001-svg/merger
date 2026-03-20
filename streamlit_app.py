@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+\#!/usr/bin/env python3
 """
 SLC Video Merger – Streamlit Edition
 All text is rendered by Pillow (no FFmpeg drawtext = no escaping bugs).
@@ -32,7 +32,7 @@ SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 # Box is generous to cover badge regardless of minor template differences.
 # White box covers the NotebookLM badge — measured from reference video (1920x1080).
 # Background is near-white so the box is invisible; only the SLC logo shows.
-WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1630, 953, 256, 127
+WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1680, 963, 200, 92
 
 # SLC logo anchored to bottom-right corner (measured from reference video).
 # scale=-1:LOGO_H lets FFmpeg auto-calculate width to preserve aspect ratio.

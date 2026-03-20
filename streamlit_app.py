@@ -33,7 +33,7 @@ SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 TOKEN_CACHE_FILE = BASE_DIR / "assets" / "ms_token_cache.json"
 
 # ── Watermark / badge cover ───────────────────────────────────────────────
-WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1660, 964, 232, 72
+WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1660, 954, 240, 94
 BOX_RADIUS = 10
 WM_EC_X, WM_EC_Y, WM_EC_W, WM_EC_H = 448, 310, 1024, 420
 EC_RADIUS  = 14
@@ -66,6 +66,51 @@ BOLD, MEDIUM = _font("Poppins-Bold.ttf"), _font("Poppins-Medium.ttf")
 def _ft(path, size):
     try:    return ImageFont.truetype(path, size) if path else ImageFont.load_default()
     except: return ImageFont.load_default()
+
+
+def _make_logo_composite(logo_path, thank_you_text, box, font_path,
+                           W=1920, H=1080, bg=(249,249,249,255)):
+    """
+    Render the SLC logo + a small text line together as one RGBA PNG.
+    box = (brx, bry, brw, brh)  — the cover box in video coordinates.
+    The logo sits in the upper portion, text centred below it.
+    """
+    brx, bry, brw, brh = box
+    img  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Draw background box
+    draw.rounded_rectangle(
+        [brx, bry, brx+brw, bry+brh],
+        radius=BOX_RADIUS, fill=bg)
+
+    # Load and scale logo to fit top 60% of box height
+    logo_h_px = int(brh * 0.58)
+    logo_img  = Image.open(str(logo_path)).convert("RGBA")
+    ratio     = logo_img.width / logo_img.height
+    logo_w_px = int(logo_h_px * ratio)
+    logo_img  = logo_img.resize((logo_w_px, logo_h_px), Image.LANCZOS)
+
+    # Centre logo horizontally, place in top portion of box
+    cx    = brx + brw // 2
+    logo_x = cx - logo_w_px // 2
+    logo_y = bry + 6
+    img.paste(logo_img, (logo_x, logo_y), logo_img)
+
+    # Draw "Thank You" text below logo
+    if thank_you_text:
+        try:
+            fn = ImageFont.truetype(font_path, 16) if font_path else ImageFont.load_default()
+        except Exception:
+            fn = ImageFont.load_default()
+        bb   = draw.textbbox((0, 0), thank_you_text, font=fn)
+        tw   = bb[2] - bb[0]
+        tx   = cx - tw // 2
+        ty   = logo_y + logo_h_px + 4
+        draw.text((tx, ty), thank_you_text, fill=(80, 80, 80, 220), font=fn)
+
+    img.save(str(Path(str(logo_path)).parent / "logo_composite.png"), "PNG")
+    return Path(str(logo_path)).parent / "logo_composite.png"
 
 
 def _make_box_png(boxes, path, W=1920, H=1080, colour=(255,255,255,255)):
@@ -215,27 +260,36 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
     ecs = _detect_end_card_start(inp_str)
     enable_ec = f"gte(t\\,{ecs:.2f})"
 
-    br_png = tmp/"wm_br.png"; ec_png = tmp/"wm_ec.png"
-    _make_box_png([(WM_BR_X,WM_BR_Y,WM_BR_W,WM_BR_H,BOX_RADIUS)], br_png, colour=(249,249,249,255))
+    ec_png = tmp/"wm_ec.png"
     _make_box_png([(WM_EC_X,WM_EC_Y,WM_EC_W,WM_EC_H,EC_RADIUS)], ec_png)
 
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
     if use_logo:
-        fc = (
-            "[1:v]format=rgba[br];"
-            "[0:v][br]overlay=x=0:y=0[v1];"
-            "[2:v]format=rgba[ec];"
-            f"[v1][ec]overlay=x=0:y=0:enable='{enable_ec}'[v2];"
-            f"[3:v]scale=-1:{LOGO_H}[logo];"
-            "[v2][logo]overlay=x='1776-(w/2)':y='1000-(h/2)'[vout]"
+        # Render logo + "Thank You" text as one composite PNG that also
+        # draws the background box — no separate br_png needed
+        comp_png = _make_logo_composite(
+            logo_path=SLC_LOGO,
+            thank_you_text="Thank You",
+            box=(WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H),
+            font_path=MEDIUM,
         )
-        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(br_png),"-i",str(ec_png),
-               "-i",str(SLC_LOGO),"-filter_complex",fc,"-map","[vout]","-map","0:a",
+        fc = (
+            "[1:v]format=rgba[comp];"
+            "[0:v][comp]overlay=x=0:y=0[v1];"
+            "[2:v]format=rgba[ec];"
+            f"[v1][ec]overlay=x=0:y=0:enable='{enable_ec}'[vout]"
+        )
+        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(comp_png),"-i",str(ec_png),
+               "-filter_complex",fc,"-map","[vout]","-map","0:a",
                "-c:v","libx264","-preset","ultrafast","-crf","23",
                "-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
                "-r","30","-pix_fmt","yuv420p","-shortest",out_str]
     else:
+        # No logo — just draw the background box
+        br_png = tmp/"wm_br.png"
+        _make_box_png([(WM_BR_X,WM_BR_Y,WM_BR_W,WM_BR_H,BOX_RADIUS)],
+                      br_png, colour=(249,249,249,255))
         fc = (
             "[1:v]format=rgba[br];"
             "[0:v][br]overlay=x=0:y=0[v1];"

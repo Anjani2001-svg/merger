@@ -50,7 +50,7 @@ LOGO_BOTTOM_MARGIN = 53
 # Uses Microsoft's well-known "Microsoft Office" public client ID —
 # no Azure app registration required.
 MS_CLIENT_ID = "076e2c7e-e5e3-4185-9679-056df2037608"
-MS_SCOPES    = ["https://graph.microsoft.com/Files.ReadWrite", "https://graph.microsoft.com/Sites.Read.All", "https://graph.microsoft.com/User.Read"]
+MS_SCOPES    = ["https://graph.microsoft.com/Files.ReadWrite", "https://graph.microsoft.com/User.Read"]
 MS_AUTHORITY = "https://login.microsoftonline.com/537b5a03-4d35-4e9c-9836-e44d62accdcb"
 
 TEAL, WHITE = (96, 204, 190), (255, 255, 255)
@@ -431,113 +431,112 @@ def _complete_device_flow():
 
 def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, status_cb=None):
     """
-    Upload data to OneDrive/SharePoint. Searches personal OneDrive AND
-    all SharePoint sites the user has access to.
+    Upload to OneDrive using only Files.ReadWrite (no admin consent needed).
+    Searches: personal drive root → personal drive search → shared items.
     Returns (True, web_url) or (False, error_message).
     """
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {"Authorization": f"Bearer {token}",
+               "Content-Type": "application/json"}
 
-    def _search_drive(drive_url):
-        """Search a drive for folder_name. Returns folder dict or None."""
-        url = f"{drive_url}/root/search(q='{folder_name}')?$select=id,name,webUrl,folder,parentReference"
-        r = requests.get(url, headers=headers, timeout=30)
+    def _cb(s):
+        if status_cb: status_cb(s)
+
+    def _find_in_drive(drive_prefix):
+        """Search a drive for the folder. Returns item dict or None."""
+        url = (f"https://graph.microsoft.com/v1.0/{drive_prefix}/root"
+               f"/search(q='{folder_name}')?$select=id,name,webUrl,folder,parentReference")
+        r = requests.get(url, headers=headers, timeout=20)
         if r.status_code != 200:
-            return None
-        items = r.json().get("value", [])
-        folders = [i for i in items if "folder" in i
-                   and folder_name.lower() in i["name"].lower()]
-        if not folders:
-            return None
-        return next((f for f in folders if f["name"] == folder_name), folders[0])
+            return None, r.status_code
+        hits = [i for i in r.json().get("value", [])
+                if "folder" in i and folder_name.lower() in i["name"].lower()]
+        if not hits:
+            return None, 200
+        # Prefer exact match
+        match = next((h for h in hits if h["name"] == folder_name), hits[0])
+        return match, 200
 
-    # ── 1. Search personal OneDrive first ────────────────────────────
-    if status_cb: status_cb("🔍 Searching personal OneDrive…")
-    folder = _search_drive("https://graph.microsoft.com/v1.0/me/drive")
-    if folder and status_cb: status_cb(f"✅ Found in personal OneDrive: {folder.get('name')}")
+    # ── 1. Search personal OneDrive ───────────────────────────────────
+    _cb("🔍 Searching personal OneDrive…")
+    folder, code = _find_in_drive("me/drive")
+    if folder:
+        _cb(f"✅ Found: {folder['name']}")
 
-    # ── 2. If not found, search SharePoint/Teams drives ──────────────
+    # ── 2. Search shared items (folder shared from SharePoint/Teams) ──
     if not folder:
-        if status_cb: status_cb("🔍 Not in personal OneDrive — searching SharePoint sites…")
-        sites_r = requests.get(
-            "https://graph.microsoft.com/v1.0/sites?search=*&$select=id,displayName",
-            headers=headers, timeout=30)
-        if sites_r.status_code != 200:
-            if status_cb: status_cb(f"⚠️ Could not list SharePoint sites (HTTP {sites_r.status_code}). Add Sites.Read.All permission in Azure.")
-        else:
-            sites = sites_r.json().get("value", [])
-            if status_cb: status_cb(f"🔍 Found {len(sites)} SharePoint site(s) — searching each…")
-            for site in sites:
-                site_id   = site.get("id", "")
-                site_name = site.get("displayName", site_id)
-                if status_cb: status_cb(f"🔍 Searching site: {site_name}…")
-                drives_r = requests.get(
-                    f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives?$select=id,name",
-                    headers=headers, timeout=30)
-                if drives_r.status_code == 200:
-                    for drive in drives_r.json().get("value", []):
-                        drive_id   = drive.get("id", "")
-                        drive_name = drive.get("name", drive_id)
-                        if status_cb: status_cb(f"   📁 Searching drive: {drive_name}…")
-                        folder = _search_drive(
-                            f"https://graph.microsoft.com/v1.0/drives/{drive_id}")
-                        if folder:
-                            if status_cb: status_cb(f"✅ Found folder in {site_name} / {drive_name}")
-                            break
-                if folder:
+        _cb("🔍 Searching shared items…")
+        shared_r = requests.get(
+            "https://graph.microsoft.com/v1.0/me/drive/sharedWithMe"
+            "?$select=id,name,webUrl,folder,remoteItem",
+            headers=headers, timeout=20)
+        if shared_r.status_code == 200:
+            for item in shared_r.json().get("value", []):
+                name = item.get("name", "")
+                if folder_name.lower() in name.lower() and (
+                        "folder" in item or "folder" in item.get("remoteItem", {})):
+                    folder = item
+                    _cb(f"✅ Found in shared items: {name}")
                     break
 
+    # ── 3. Try creating/using folder directly in personal drive root ──
     if not folder:
-        # Build a helpful message listing what was searched
-        searched = ["Personal OneDrive"]
-        sites_r2 = requests.get(
-            "https://graph.microsoft.com/v1.0/sites?search=*&$select=displayName",
-            headers=headers, timeout=15)
-        if sites_r2.status_code == 200:
-            for s in sites_r2.json().get("value", []):
-                searched.append(s.get("displayName", "Unknown site"))
-        searched_str = ", ".join(searched[:8])
-        return False, (
-            f"❌ Folder **'{folder_name}'** not found.\n\n"
-            f"Searched in: {searched_str}\n\n"
-            f"**Possible fixes:**\n"
-            f"1. Check the folder name matches exactly (case-sensitive)\n"
-            f"2. Make sure you have access to the folder\n"
-            f"3. If it's a shared/Teams folder, add **Sites.Read.All** permission in Azure app registration"
-        )
+        _cb(f"📁 Folder not found — creating '{folder_name}' in your OneDrive root…")
+        create_r = requests.post(
+            "https://graph.microsoft.com/v1.0/me/drive/root/children",
+            headers=headers,
+            json={"name": folder_name, "folder": {},
+                  "@microsoft.graph.conflictBehavior": "rename"},
+            timeout=20)
+        if create_r.status_code in (200, 201):
+            folder = create_r.json()
+            _cb(f"✅ Created folder '{folder_name}' in your personal OneDrive.")
+        else:
+            return False, (
+                f"❌ Could not find or create folder '{folder_name}'.\n\n"
+                f"**The folder exists in SharePoint/Teams** but requires admin permission "
+                f"to access via API.\n\n"
+                f"**Workaround:** Ask your IT admin to grant admin consent for the app, "
+                f"or manually move the video after downloading it."
+            )
 
-    # Get the drive ID from the folder's parentReference
-    drive_id   = folder.get("parentReference", {}).get("driveId", "")
-    folder_id  = folder["id"]
-
-    if not drive_id:
-        # Fall back to personal drive
-        drive_id = "me/drive"
-        session_base = f"https://graph.microsoft.com/v1.0/me/drive/items/{folder_id}"
-    else:
+    # ── Get drive ID and folder ID for upload session ─────────────────
+    remote = folder.get("remoteItem", {})
+    if remote:
+        # Shared item — use the remote drive/item IDs
+        drive_id  = remote.get("parentReference", {}).get("driveId", "")
+        folder_id = remote.get("id", "")
         session_base = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{folder_id}"
+    else:
+        parent_drive = folder.get("parentReference", {}).get("driveId", "")
+        folder_id    = folder.get("id", "")
+        if parent_drive:
+            session_base = f"https://graph.microsoft.com/v1.0/drives/{parent_drive}/items/{folder_id}"
+        else:
+            session_base = f"https://graph.microsoft.com/v1.0/me/drive/items/{folder_id}"
 
-    # ── 2. Create upload session ──────────────────────────────────────
-    session_url = f"{session_base}:/{filename}:/createUploadSession"
+    # ── Create upload session ─────────────────────────────────────────
+    _cb("⬆️ Creating upload session…")
+    session_url  = f"{session_base}:/{filename}:/createUploadSession"
     session_body = {"item": {"@microsoft.graph.conflictBehavior": "rename"}}
-    r2 = requests.post(session_url, headers={**headers, "Content-Type": "application/json"},
-                       json=session_body, timeout=30)
+    r2 = requests.post(session_url,
+                       headers=headers, json=session_body, timeout=30)
     if r2.status_code not in (200, 201):
-        return False, f"Could not create upload session (HTTP {r2.status_code}): {r2.text[:200]}"
+        return False, f"Could not create upload session (HTTP {r2.status_code}): {r2.text[:300]}"
 
     upload_url = r2.json()["uploadUrl"]
 
-    # ── 3. Upload in 10 MB chunks ─────────────────────────────────────
-    CHUNK = 10 * 1024 * 1024
-    total = len(data)
+    # ── Upload in 10 MB chunks ────────────────────────────────────────
+    CHUNK    = 10 * 1024 * 1024
+    total    = len(data)
     uploaded = 0
     file_web_url = None
 
-    if status_cb: status_cb(f"⬆️ Uploading {len(data)/1048576:.1f} MB to OneDrive…")
     while uploaded < total:
         chunk     = data[uploaded: uploaded + CHUNK]
         chunk_end = uploaded + len(chunk) - 1
         pct = int(uploaded / total * 100)
-        if status_cb and uploaded > 0: status_cb(f"⬆️ Uploading… {pct}% ({uploaded//1048576} MB / {total//1048576} MB)")
+        if uploaded > 0:
+            _cb(f"⬆️ Uploading… {pct}% ({uploaded//1048576} / {total//1048576} MB)")
         chunk_headers = {
             "Content-Length": str(len(chunk)),
             "Content-Range":  f"bytes {uploaded}-{chunk_end}/{total}",
@@ -547,12 +546,13 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, s
         if r3.status_code in (200, 201):
             file_web_url = r3.json().get("webUrl", "")
         elif r3.status_code == 202:
-            pass  # accepted, more chunks coming
+            pass  # more chunks needed
         else:
             return False, f"Upload failed at byte {uploaded} (HTTP {r3.status_code}): {r3.text[:200]}"
         uploaded += len(chunk)
 
-    return True, file_web_url or folder["webUrl"]
+    _cb("✅ Upload complete!")
+    return True, file_web_url or folder.get("webUrl", "https://onedrive.live.com")
 
 
 def _check_template():

@@ -429,7 +429,7 @@ def _complete_device_flow():
     return False, err
 
 
-def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str):
+def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, status_cb=None):
     """
     Upload data to OneDrive/SharePoint. Searches personal OneDrive AND
     all SharePoint sites the user has access to.
@@ -451,34 +451,58 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str):
         return next((f for f in folders if f["name"] == folder_name), folders[0])
 
     # ── 1. Search personal OneDrive first ────────────────────────────
+    if status_cb: status_cb("🔍 Searching personal OneDrive…")
     folder = _search_drive("https://graph.microsoft.com/v1.0/me/drive")
+    if folder and status_cb: status_cb(f"✅ Found in personal OneDrive: {folder.get('name')}")
 
     # ── 2. If not found, search SharePoint/Teams drives ──────────────
     if not folder:
+        if status_cb: status_cb("🔍 Not in personal OneDrive — searching SharePoint sites…")
         sites_r = requests.get(
             "https://graph.microsoft.com/v1.0/sites?search=*&$select=id,displayName",
             headers=headers, timeout=30)
-        if sites_r.status_code == 200:
-            for site in sites_r.json().get("value", []):
-                site_id = site.get("id", "")
+        if sites_r.status_code != 200:
+            if status_cb: status_cb(f"⚠️ Could not list SharePoint sites (HTTP {sites_r.status_code}). Add Sites.Read.All permission in Azure.")
+        else:
+            sites = sites_r.json().get("value", [])
+            if status_cb: status_cb(f"🔍 Found {len(sites)} SharePoint site(s) — searching each…")
+            for site in sites:
+                site_id   = site.get("id", "")
+                site_name = site.get("displayName", site_id)
+                if status_cb: status_cb(f"🔍 Searching site: {site_name}…")
                 drives_r = requests.get(
                     f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives?$select=id,name",
                     headers=headers, timeout=30)
                 if drives_r.status_code == 200:
                     for drive in drives_r.json().get("value", []):
-                        drive_id = drive.get("id", "")
+                        drive_id   = drive.get("id", "")
+                        drive_name = drive.get("name", drive_id)
+                        if status_cb: status_cb(f"   📁 Searching drive: {drive_name}…")
                         folder = _search_drive(
                             f"https://graph.microsoft.com/v1.0/drives/{drive_id}")
                         if folder:
+                            if status_cb: status_cb(f"✅ Found folder in {site_name} / {drive_name}")
                             break
                 if folder:
                     break
 
     if not folder:
+        # Build a helpful message listing what was searched
+        searched = ["Personal OneDrive"]
+        sites_r2 = requests.get(
+            "https://graph.microsoft.com/v1.0/sites?search=*&$select=displayName",
+            headers=headers, timeout=15)
+        if sites_r2.status_code == 200:
+            for s in sites_r2.json().get("value", []):
+                searched.append(s.get("displayName", "Unknown site"))
+        searched_str = ", ".join(searched[:8])
         return False, (
-            f"Folder '{folder_name}' not found in your OneDrive or SharePoint.\n\n"
-            f"Tip: Make sure the folder name matches exactly. "
-            f"The folder was searched in your personal OneDrive and all SharePoint sites."
+            f"❌ Folder **'{folder_name}'** not found.\n\n"
+            f"Searched in: {searched_str}\n\n"
+            f"**Possible fixes:**\n"
+            f"1. Check the folder name matches exactly (case-sensitive)\n"
+            f"2. Make sure you have access to the folder\n"
+            f"3. If it's a shared/Teams folder, add **Sites.Read.All** permission in Azure app registration"
         )
 
     # Get the drive ID from the folder's parentReference
@@ -508,9 +532,12 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str):
     uploaded = 0
     file_web_url = None
 
+    if status_cb: status_cb(f"⬆️ Uploading {len(data)/1048576:.1f} MB to OneDrive…")
     while uploaded < total:
         chunk     = data[uploaded: uploaded + CHUNK]
         chunk_end = uploaded + len(chunk) - 1
+        pct = int(uploaded / total * 100)
+        if status_cb and uploaded > 0: status_cb(f"⬆️ Uploading… {pct}% ({uploaded//1048576} MB / {total//1048576} MB)")
         chunk_headers = {
             "Content-Length": str(len(chunk)),
             "Content-Range":  f"bytes {uploaded}-{chunk_end}/{total}",
@@ -738,8 +765,13 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
                 st.markdown('<div style="margin:8px 0"><span class="sn">☁</span>'
                     '<span class="st">Save to OneDrive</span></div>', unsafe_allow_html=True)
                 if st.button("☁ Upload to OneDrive", use_container_width=True):
-                    with st.spinner(f"Uploading **{filename}** to OneDrive…"):
-                        ok, result = _onedrive_upload(data, filename, onedrive_folder, current_token)
+                    log = st.empty()
+                    log.info("🔍 Searching for folder in OneDrive and SharePoint…")
+                    ok, result = _onedrive_upload(
+                        data, filename, onedrive_folder, current_token,
+                        status_cb=lambda s: log.info(s)
+                    )
+                    log.empty()
                     if ok:
                         st.success(f"✅ Uploaded! [Open in OneDrive]({result})")
                     else:

@@ -228,46 +228,69 @@ def normalise(inp, out):
 
 def _detect_badge_position(norm_video_path):
     """
-    Auto-detect the NotebookLM badge position by sampling a frame from
-    30% into the normalised video and scanning the bottom-right quadrant
-    for a cluster of dark pixels on a near-white background.
-    Returns (brx, bry, brw, brh) with 14px padding, or fallback defaults.
+    Auto-detect the NotebookLM badge position.
+
+    Samples 3 frames (25%, 50%, 75%) and scans the bottom-right region
+    of each for the badge (dark text cluster on near-white background).
+
+    Scan window: bottom 40% of height, right 40% of width.
+    This covers all known NB badge positions (y=60%..95% of frame).
+
+    Returns (brx, bry, brw, brh) padded by 16px, or fallback defaults.
     """
+    best = None
     try:
-        duration   = _probe_duration(norm_video_path)
-        sample_t   = duration * 0.30
-        fd, tf     = tempfile.mkstemp(suffix=".jpg")
-        os.close(fd)
-        try:
-            subprocess.run(
-                ["ffmpeg", "-y", "-ss", f"{sample_t:.2f}",
-                 "-i", str(norm_video_path), "-vframes", "1", tf],
-                capture_output=True, timeout=10)
-            img = Image.open(tf)
-            a   = np.array(img)
-            H, W = a.shape[:2]
+        duration = _probe_duration(norm_video_path)
+        for frac in (0.25, 0.50, 0.75):
+            sample_t = duration * frac
+            fd, tf   = tempfile.mkstemp(suffix=".jpg")
+            os.close(fd)
+            try:
+                subprocess.run(
+                    ["ffmpeg", "-y", "-ss", f"{sample_t:.2f}",
+                     "-i", str(norm_video_path), "-vframes", "1", tf],
+                    capture_output=True, timeout=10)
+                img = Image.open(tf)
+                a   = np.array(img)
+                H, W = a.shape[:2]
 
-            # Search the bottom-right quadrant: bottom 20%, right 35%
-            ys = int(H * 0.80);  xs = int(W * 0.65)
-            region = a[ys:, xs:]
-            dark   = region.mean(axis=2) < 120
-            rows, cols = np.where(dark)
+                # Scan bottom 40% of frame, right 40% of width.
+                # NotebookLM badges appear anywhere from y=60% to y=95%.
+                ys = int(H * 0.60);  xs = int(W * 0.60)
+                region = a[ys:, xs:]
 
-            if len(rows) > 30:
-                pad = 14
-                brx = max(0, xs + int(cols.min()) - pad)
-                bry = max(0, ys + int(rows.min()) - pad)
-                brw = int(cols.max() - cols.min()) + pad * 2
-                brh = int(rows.max() - rows.min()) + pad * 2
-                # Sanity check: badge should be a reasonable size
-                if 50 < brw < 600 and 20 < brh < 200:
-                    return brx, bry, brw, brh
-        finally:
-            try: os.unlink(tf)
-            except OSError: pass
+                # Skip dark frames (transitions/intro)
+                if region.mean() < 160:
+                    continue
+
+                # Badge = dark pixels on near-white background
+                near_white = (region.mean(axis=2) > 190).mean()
+                dark       = region.mean(axis=2) < 130
+                rows, cols = np.where(dark)
+
+                if near_white < 0.45 or len(rows) < 20:
+                    continue
+
+                pad  = 16
+                brx  = max(0, xs + int(cols.min()) - pad)
+                bry  = max(0, ys + int(rows.min()) - pad)
+                brw  = int(cols.max() - cols.min()) + pad * 2
+                brh  = int(rows.max() - rows.min()) + pad * 2
+
+                # Badge must be a reasonable size (not the whole slide)
+                if 40 < brw < 550 and 20 < brh < 200:
+                    # Prefer candidate closest to bottom-right corner
+                    corner_dist = (W - (brx + brw)) + (H - (bry + brh))
+                    if best is None or corner_dist < best[1]:
+                        best = ((brx, bry, brw, brh), corner_dist)
+
+            finally:
+                try: os.unlink(tf)
+                except OSError: pass
     except Exception:
         pass
-    return _BADGE_FALLBACK
+
+    return best[0] if best else _BADGE_FALLBACK
 
 
 def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None):  # src_resolution kept for API compat

@@ -50,7 +50,7 @@ LOGO_BOTTOM_MARGIN = 53
 # Uses Microsoft's well-known "Microsoft Office" public client ID —
 # no Azure app registration required.
 MS_CLIENT_ID = "076e2c7e-e5e3-4185-9679-056df2037608"
-MS_SCOPES    = ["https://graph.microsoft.com/Files.ReadWrite"]
+MS_SCOPES    = ["https://graph.microsoft.com/Files.ReadWrite", "https://graph.microsoft.com/Sites.Read.All", "https://graph.microsoft.com/User.Read"]
 MS_AUTHORITY = "https://login.microsoftonline.com/537b5a03-4d35-4e9c-9836-e44d62accdcb"
 
 TEAL, WHITE = (96, 204, 190), (255, 255, 255)

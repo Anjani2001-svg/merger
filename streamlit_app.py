@@ -32,7 +32,7 @@ SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 # Box is generous to cover badge regardless of minor template differences.
 # White box covers the NotebookLM badge — measured from reference video (1920x1080).
 # Background is near-white so the box is invisible; only the SLC logo shows.
-WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1680, 963, 200, 92
+WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1660, 964, 232, 72
 
 # SLC logo anchored to bottom-right corner (measured from reference video).
 # scale=-1:LOGO_H lets FFmpeg auto-calculate width to preserve aspect ratio.
@@ -251,7 +251,7 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
     """
     inp_str, out_str = str(inp), str(out)
     # Fixed badge cover box — measured from reference video
-    brx, bry, brw, brh = WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H
+    brx, bry, brw, brh = WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1660, 964, 232, 72
 
     if progress_cb:
         progress_cb("Detecting end-card start time…")

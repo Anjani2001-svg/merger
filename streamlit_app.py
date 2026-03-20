@@ -26,17 +26,8 @@ BASE_DIR  = Path(__file__).parent
 INTRO_TPL = BASE_DIR / "assets" / "intro_template.mp4"
 SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 
-# ── Bottom-right badge coordinates (in 1920×1080 space after normalise) ─
-# Measured from actual video:
-#   1920×1080 native: x=1733, y=970, w=163, h=87
-#   1280×720 source:  scaled down by 1/1.5
-# Union box — covers badge position across ALL known NotebookLM video styles.
-# Background is near-white so a larger box is completely invisible.
-WM_COORDS = {
-    (1920, 1080): dict(br_x=1450, br_y=900, br_w=446, br_h=167),
-    (1280, 720):  dict(br_x=966,  br_y=600, br_w=298, br_h=112),
-}
-WM_FALLBACK = WM_COORDS[(1920, 1080)]
+# Badge fallback (used only if auto-detection finds nothing)
+_BADGE_FALLBACK = (1420, 880, 320, 100)  # x, y, w, h in 1920x1080 space
 
 # Rounded-corner radius for white boxes
 BOX_RADIUS = 10
@@ -235,7 +226,51 @@ def normalise(inp, out):
     cmd += [str(out)];  _ff(cmd);  return Path(out)
 
 
-def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None):
+def _detect_badge_position(norm_video_path):
+    """
+    Auto-detect the NotebookLM badge position by sampling a frame from
+    30% into the normalised video and scanning the bottom-right quadrant
+    for a cluster of dark pixels on a near-white background.
+    Returns (brx, bry, brw, brh) with 14px padding, or fallback defaults.
+    """
+    try:
+        duration   = _probe_duration(norm_video_path)
+        sample_t   = duration * 0.30
+        fd, tf     = tempfile.mkstemp(suffix=".jpg")
+        os.close(fd)
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-ss", f"{sample_t:.2f}",
+                 "-i", str(norm_video_path), "-vframes", "1", tf],
+                capture_output=True, timeout=10)
+            img = Image.open(tf)
+            a   = np.array(img)
+            H, W = a.shape[:2]
+
+            # Search the bottom-right quadrant: bottom 20%, right 35%
+            ys = int(H * 0.80);  xs = int(W * 0.65)
+            region = a[ys:, xs:]
+            dark   = region.mean(axis=2) < 120
+            rows, cols = np.where(dark)
+
+            if len(rows) > 30:
+                pad = 14
+                brx = max(0, xs + int(cols.min()) - pad)
+                bry = max(0, ys + int(rows.min()) - pad)
+                brw = int(cols.max() - cols.min()) + pad * 2
+                brh = int(rows.max() - rows.min()) + pad * 2
+                # Sanity check: badge should be a reasonable size
+                if 50 < brw < 600 and 20 < brh < 200:
+                    return brx, bry, brw, brh
+        finally:
+            try: os.unlink(tf)
+            except OSError: pass
+    except Exception:
+        pass
+    return _BADGE_FALLBACK
+
+
+def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None):  # src_resolution kept for API compat
     """
     Replace NotebookLM branding using rounded-corner PNG overlays.
 
@@ -246,9 +281,8 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
         Rounded white box covers centred icon + notebooklm.google.com URL.
     """
     inp_str, out_str = str(inp), str(out)
-    coords = WM_COORDS.get(src_resolution, WM_FALLBACK)
-    brx, bry = coords["br_x"], coords["br_y"]
-    brw, brh = coords["br_w"], coords["br_h"]
+    # Auto-detect badge from the actual video frame — works for any template
+    brx, bry, brw, brh = _detect_badge_position(inp_str)
 
     if progress_cb:
         progress_cb("Detecting end-card start time…")

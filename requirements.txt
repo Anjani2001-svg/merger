@@ -1,2 +1,5 @@
 streamlit>=1.30
 Pillow>=10.0
+numpy
+msal
+requests

@@ -71,12 +71,10 @@ def _ft(path, size):
     except: return ImageFont.load_default()
 
 
-def _make_logo_composite(logo_path, thank_you_text, box, font_path,
-                           W=1920, H=1080, bg=(249,249,249,255)):
+def _make_logo_composite(logo_path, box, W=1920, H=1080, bg=(249,249,249,255)):
     """
-    Render the SLC logo + a small text line together as one RGBA PNG.
-    box = (brx, bry, brw, brh)  — the cover box in video coordinates.
-    The logo sits in the upper portion, text centred below it.
+    Render the background box + SLC logo centred inside as one RGBA PNG.
+    box = (brx, bry, brw, brh) — the cover box in video coordinates.
     """
     brx, bry, brw, brh = box
     img  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -87,58 +85,36 @@ def _make_logo_composite(logo_path, thank_you_text, box, font_path,
         [brx, bry, brx+brw, bry+brh],
         radius=BOX_RADIUS, fill=bg)
 
-    # Load and scale logo to fit top 60% of box height
-    logo_h_px = int(brh * 0.58)
+    # Load and scale logo to fit inside box with padding
+    logo_h_px = brh - 12
     logo_img  = Image.open(str(logo_path)).convert("RGBA")
     ratio     = logo_img.width / logo_img.height
     logo_w_px = int(logo_h_px * ratio)
+    # Clamp width to box width
+    if logo_w_px > brw - 12:
+        logo_w_px = brw - 12
+        logo_h_px = int(logo_w_px / ratio)
     logo_img  = logo_img.resize((logo_w_px, logo_h_px), Image.LANCZOS)
 
-    # Centre logo horizontally, place in top portion of box
-    cx    = brx + brw // 2
+    # Centre logo in box
+    cx     = brx + brw // 2
+    cy     = bry + brh // 2
     logo_x = cx - logo_w_px // 2
-    logo_y = bry + 6
+    logo_y = cy - logo_h_px // 2
     img.paste(logo_img, (logo_x, logo_y), logo_img)
 
-    # Draw "Thank You" text below logo
-    if thank_you_text:
-        try:
-            fn = ImageFont.truetype(font_path, 16) if font_path else ImageFont.load_default()
-        except Exception:
-            fn = ImageFont.load_default()
-        bb   = draw.textbbox((0, 0), thank_you_text, font=fn)
-        tw   = bb[2] - bb[0]
-        tx   = cx - tw // 2
-        ty   = logo_y + logo_h_px + 4
-        draw.text((tx, ty), thank_you_text, fill=(80, 80, 80, 220), font=fn)
-
-    img.save(str(Path(str(logo_path)).parent / "logo_composite.png"), "PNG")
-    return Path(str(logo_path)).parent / "logo_composite.png"
+    out = Path(str(logo_path)).parent / "logo_composite.png"
+    img.save(str(out), "PNG")
+    return out
 
 
 def _make_ec_png(path, W=1920, H=1080):
-    """
-    Render the end-card cover PNG:
-    rounded white box + centred 'Thank You' text in SLC teal.
-    """
+    """Render the end-card cover PNG: rounded white box only."""
     img  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-
-    # Rounded white box (same dimensions as WM_EC)
     draw.rounded_rectangle(
         [WM_EC_X, WM_EC_Y, WM_EC_X+WM_EC_W, WM_EC_Y+WM_EC_H],
         radius=EC_RADIUS, fill=(255, 255, 255, 255))
-
-    # "Thank You" text centred in the box
-    fn   = _ft(BOLD, 72)
-    text = "Thank You"
-    cx   = WM_EC_X + WM_EC_W // 2
-    cy   = WM_EC_Y + WM_EC_H // 2
-    # Shadow for depth
-    draw.text((cx+3, cy+3), text, fill=(0, 0, 0, 40), font=fn, anchor="mm")
-    # Main text in SLC teal
-    draw.text((cx, cy), text, fill=TEAL+(255,), font=fn, anchor="mm")
-
     img.save(str(path), "PNG")
     return path
 
@@ -296,13 +272,11 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
     if use_logo:
-        # Render logo + "Thank You" text as one composite PNG that also
+        # Render logo composite PNG (box + centred logo)
         # draws the background box — no separate br_png needed
         comp_png = _make_logo_composite(
             logo_path=SLC_LOGO,
-            thank_you_text="Thank You",
             box=(WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H),
-            font_path=MEDIUM,
         )
         fc = (
             "[1:v]format=rgba[comp];"
@@ -595,18 +569,7 @@ if vid:
     st.success(f"📁 **{vid.name}** — {vid.size/1048576:.1f} MB")
 st.markdown("---")
 
-# ── 2b  SLC LOGO ──────────────────────────────────────────────────────────
-st.markdown('<div><span class="sn">✦</span><span class="st">SLC Logo (replaces NotebookLM badge)</span></div>', unsafe_allow_html=True)
-logo_upload = st.file_uploader("SLC Logo PNG", type=["png"], help="Transparent PNG preferred")
-if logo_upload:
-    SLC_LOGO.parent.mkdir(parents=True, exist_ok=True)
-    SLC_LOGO.write_bytes(logo_upload.getvalue())
-    st.success("✅ Logo saved.")
-elif SLC_LOGO.exists():
-    st.info("ℹ️ Using existing logo at `assets/slc_logo.png`.")
-else:
-    st.warning("⚠️ No logo — badge area will be covered with white only.")
-st.markdown("---")
+
 
 # ── 2c  ONEDRIVE ──────────────────────────────────────────────────────────
 st.markdown('<div><span class="sn">☁</span><span class="st">OneDrive Upload (Optional)</span></div>', unsafe_allow_html=True)

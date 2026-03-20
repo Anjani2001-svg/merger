@@ -462,21 +462,25 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, s
     if folder:
         _cb(f"✅ Found: {folder['name']}")
 
-    # ── 2. Search shared items (folder shared from SharePoint/Teams) ──
+    # ── 2. Search shared items with pagination ───────────────────────
     if not folder:
         _cb("🔍 Searching shared items…")
-        shared_r = requests.get(
-            "https://graph.microsoft.com/v1.0/me/drive/sharedWithMe"
-            "?$select=id,name,webUrl,folder,remoteItem",
-            headers=headers, timeout=20)
-        if shared_r.status_code == 200:
+        next_url = ("https://graph.microsoft.com/v1.0/me/drive/sharedWithMe"
+                    "?$select=id,name,webUrl,folder,remoteItem&$top=100")
+        page = 0
+        while next_url and not folder and page < 10:
+            shared_r = requests.get(next_url, headers=headers, timeout=20)
+            if shared_r.status_code != 200:
+                break
             for item in shared_r.json().get("value", []):
                 name = item.get("name", "")
-                if folder_name.lower() in name.lower() and (
-                        "folder" in item or "folder" in item.get("remoteItem", {})):
+                # Match by name — accept any item (file or folder) with matching name
+                if folder_name.lower() in name.lower():
                     folder = item
                     _cb(f"✅ Found in shared items: {name}")
                     break
+            next_url = shared_r.json().get("@odata.nextLink")
+            page += 1
 
     # ── 3. Try creating/using folder directly in personal drive root ──
     if not folder:
@@ -675,32 +679,33 @@ else:
                 else:
                     st.warning("⚠️ Not in personal OneDrive")
 
-                    # Step 3: sharedWithMe (SharePoint/Teams folders shared with user)
-                    r2 = _req.get(
-                        "https://graph.microsoft.com/v1.0/me/drive/sharedWithMe"
-                        "?$select=id,name,webUrl,folder,remoteItem",
-                        headers=_headers, timeout=15)
-                    st.write(f"**Shared items search** → HTTP {r2.status_code}")
-                    if r2.status_code == 200:
-                        all_shared = r2.json().get("value", [])
-                        st.write(f"Total shared items: {len(all_shared)}")
-                        # Show all shared folder names for reference
-                        shared_names = [i.get("name","?") for i in all_shared
-                                        if "folder" in i or "folder" in i.get("remoteItem",{})]
-                        if shared_names:
-                            st.write(f"Shared folders found: {shared_names}")
-                        matches = [i for i in all_shared
-                                   if onedrive_folder.lower() in i.get("name","").lower()
-                                   and ("folder" in i or "folder" in i.get("remoteItem",{}))]
-                        if matches:
-                            st.success(f"✅ Found in shared items: `{matches[0]['name']}`")
-                        else:
-                            st.error(
-                                f"❌ Folder **'{onedrive_folder}'** not found in shared items.\n\n"
-                                f"The folder name above shows all shared folders — "
-                                f"check if the name matches exactly.")
+                    # Step 3: sharedWithMe with full pagination
+                    all_shared = []
+                    next_url = ("https://graph.microsoft.com/v1.0/me/drive/sharedWithMe"
+                                "?$select=id,name,webUrl,folder,remoteItem&$top=100")
+                    page = 0
+                    while next_url and page < 10:
+                        r2 = _req.get(next_url, headers=_headers, timeout=15)
+                        if r2.status_code != 200:
+                            st.error(f"Shared items error: {r2.text[:200]}")
+                            break
+                        all_shared.extend(r2.json().get("value", []))
+                        next_url = r2.json().get("@odata.nextLink")
+                        page += 1
+
+                    st.write(f"**Shared items (all pages):** {len(all_shared)} items found")
+                    # Show ALL item names so user can see what's available
+                    all_names = [i.get("name","?") for i in all_shared]
+                    st.write(f"All shared items: {all_names}")
+
+                    matches = [i for i in all_shared
+                               if onedrive_folder.lower() in i.get("name","").lower()]
+                    if matches:
+                        st.success(f"✅ Found: `{matches[0]['name']}` — upload should work!")
                     else:
-                        st.error(f"Could not access shared items: {r2.text[:200]}")
+                        st.error(
+                            f"❌ **'{onedrive_folder}'** not found in {len(all_shared)} shared items.\n\n"
+                            f"Check the list above — copy the exact folder name and paste it above.")
     else:
         st.markdown(
             '<p style="font-size:13px;color:rgba(255,255,255,.6);margin-bottom:8px">'

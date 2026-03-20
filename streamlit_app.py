@@ -396,54 +396,110 @@ _check_template()
 
 
 # ───────────────────── ONEDRIVE UPLOAD ──────────────────────────────────────
-def _upload_to_onedrive(data: bytes, filename: str, sharing_url: str) -> str | None:
+def _upload_to_onedrive(data: bytes, filename: str, sharing_url: str):
     """
-    Upload video bytes to a OneDrive shared folder using just the sharing link.
-    No app registration or OAuth needed — works when the folder sharing link
-    is set to 'Anyone with the link can edit'.
+    Upload video bytes to a OneDrive shared folder using the sharing link.
 
-    Returns None on success, or an error string on failure.
+    Returns (True, file_web_url) on success.
+    Returns (False, error_message) on failure with a full diagnostic.
+
+    Uses Microsoft Graph upload session for large files (>4 MB).
+    Works only when the folder link is set to 'Anyone with the link can edit'.
     """
-    import base64, urllib.request, urllib.error, json
+    import base64, urllib.request, urllib.error, json, math
 
-    # Encode the sharing URL per Microsoft Graph API spec:
-    # base64url(url) with trailing '=' removed, prefixed with 'u!'
+    # ── Encode sharing URL ────────────────────────────────────────────
     b64 = base64.urlsafe_b64encode(sharing_url.encode()).rstrip(b"=").decode()
     encoded_url = "u!" + b64
+    base_ep = f"https://graph.microsoft.com/v1.0/shares/{encoded_url}"
 
-    upload_endpoint = (
-        f"https://graph.microsoft.com/v1.0/shares/{encoded_url}"
-        f"/root:/{filename}:/content"
-    )
-
-    req = urllib.request.Request(
-        upload_endpoint,
-        data=data,
-        method="PUT",
-        headers={"Content-Type": "video/mp4"},
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            if resp.status in (200, 201):
-                return None   # success
-            return f"Unexpected status {resp.status}"
-    except urllib.error.HTTPError as e:
-        body = e.read().decode(errors="replace")
+    def _http(url, method="GET", body=None, headers=None):
+        """Simple HTTP helper — returns (status, response_dict_or_str)."""
+        h = {"Content-Type": "application/json"}
+        if headers:
+            h.update(headers)
+        req = urllib.request.Request(url, data=body, method=method, headers=h)
         try:
-            msg = json.loads(body).get("error", {}).get("message", body)
-        except Exception:
-            msg = body[:300]
-        # Helpful hint for the most common error
-        if e.code == 401:
-            msg = ("Not authorised. Make sure the sharing link is set to "
-                   "'Anyone with the link can EDIT' (not just view).")
-        elif e.code == 403:
-            msg = ("Forbidden. The link may be view-only. Change it to "
-                   "'Anyone with the link can edit' in OneDrive sharing settings.")
-        return f"HTTP {e.code}: {msg}"
-    except Exception as e:
-        return str(e)
+            with urllib.request.urlopen(req, timeout=60) as r:
+                raw = r.read().decode(errors="replace")
+                try:    return r.status, json.loads(raw)
+                except: return r.status, raw
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode(errors="replace")
+            try:    return e.code, json.loads(raw)
+            except: return e.code, raw
+
+    # ── Step 1: resolve the sharing link to get driveItem metadata ────
+    status, meta = _http(f"{base_ep}/root")
+    if status not in (200, 201):
+        # Diagnose common errors
+        if status == 401:
+            return False, "❌ Not authorised (HTTP 401). The folder link must be set to 'Anyone with the link can edit'. In OneDrive: right-click folder → Share → settings cog → change 'Can view' to 'Can edit' → copy the new link."
+        if status == 403:
+            return False, "❌ Forbidden (HTTP 403). Your organisation may have disabled anonymous edit links. Contact your IT admin."
+        if status == 404:
+            return False, "❌ Folder not found (HTTP 404). The sharing link may have expired. Generate a fresh link from OneDrive."
+        err_msg = meta.get("error", {}).get("message", str(meta)) if isinstance(meta, dict) else str(meta)[:300]
+        return False, f"❌ Could not access folder (HTTP {status}): {err_msg}"
+
+    # ── Step 2: create an upload session for large file support ───────
+    drive_id = meta.get("parentReference", {}).get("driveId", "")
+    item_id  = meta.get("id", "")
+
+    if not drive_id or not item_id:
+        return False, "❌ Could not read folder metadata from OneDrive response."
+
+    session_url = (
+        f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/"
+        f"{item_id}:/{filename}:/createUploadSession"
+    )
+    session_body = json.dumps({
+        "item": {"@microsoft.graph.conflictBehavior": "rename"}
+    }).encode()
+    status2, session = _http(session_url, method="POST", body=session_body)
+
+    if status2 not in (200, 201) or "uploadUrl" not in (session if isinstance(session, dict) else {}):
+        if status2 == 401:
+            return False, "❌ Not authorised to upload (HTTP 401). Change the sharing link to Can edit and try again."
+        err = session.get("error", {}).get("message", str(session)) if isinstance(session, dict) else str(session)[:300]
+        return False, f"❌ Could not create upload session (HTTP {status2}): {err}"
+
+    upload_url = session["uploadUrl"]
+
+    # ── Step 3: upload in 10 MB chunks ────────────────────────────────
+    CHUNK = 10 * 1024 * 1024   # 10 MB
+    total = len(data)
+    uploaded = 0
+    file_url = None
+
+    while uploaded < total:
+        chunk_data  = data[uploaded: uploaded + CHUNK]
+        chunk_end   = uploaded + len(chunk_data) - 1
+        headers = {
+            "Content-Length": str(len(chunk_data)),
+            "Content-Range":  f"bytes {uploaded}-{chunk_end}/{total}",
+            "Content-Type":   "video/mp4",
+        }
+        req = urllib.request.Request(
+            upload_url, data=chunk_data, method="PUT", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                raw = r.read().decode(errors="replace")
+                try:    resp_json = json.loads(raw)
+                except: resp_json = {}
+                if r.status in (200, 201):
+                    # Final chunk — get the web URL
+                    file_url = resp_json.get("webUrl", "")
+                uploaded += len(chunk_data)
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode(errors="replace")
+            try:    err = json.loads(raw).get("error", {}).get("message", raw[:200])
+            except: err = raw[:200]
+            return False, f"❌ Upload failed at byte {uploaded} (HTTP {e.code}): {err}"
+        except Exception as ex:
+            return False, f"❌ Upload error at byte {uploaded}: {ex}"
+
+    return True, file_url or "https://onedrive.live.com"
 
 
 # ───────────────────────── CSS ────────────────────────────────────────────
@@ -615,12 +671,15 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
                 if not onedrive_url.strip():
                     st.warning("Paste the OneDrive sharing link first.")
                 else:
-                    with st.spinner("Uploading to OneDrive…"):
-                        err = _upload_to_onedrive(data, filename, onedrive_url.strip())
-                        if err:
-                            st.error(f"Upload failed: {err}")
+                    with st.spinner("Uploading to OneDrive… (large files may take a minute)"):
+                        ok, result = _upload_to_onedrive(data, filename, onedrive_url.strip())
+                        if ok:
+                            st.success(
+                                f"✅ **{filename}** uploaded successfully!  \n"
+                                f"[Open file in OneDrive]({result})"
+                            )
                         else:
-                            st.success(f"✅ Uploaded **{filename}** to OneDrive folder.")
+                            st.error(result)
 
         except Exception as e:
             bar.empty();  msg.empty()

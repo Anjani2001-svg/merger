@@ -653,72 +653,54 @@ else:
 
         # ── Test connection button ─────────────────────────────────
         if st.button("🔍 Test Folder Connection", type="secondary"):
-            with st.spinner("Testing…"):
-                log_lines = []
-                def _cb(s): log_lines.append(s)
+            import requests as _req
+            _headers = {"Authorization": f"Bearer {token}"}
 
-                import requests as _req
-                _headers = {"Authorization": f"Bearer {token}"}
+            # Step 1: verify token
+            me = _req.get("https://graph.microsoft.com/v1.0/me",
+                          headers=_headers, timeout=15)
+            if me.status_code != 200:
+                st.error(f"❌ Token invalid (HTTP {me.status_code}). Sign out and reconnect.")
+            else:
+                st.success(f"✅ Token valid — signed in as **{me.json().get('displayName','?')}**")
 
-                # Step 1: verify token works
-                me = _req.get("https://graph.microsoft.com/v1.0/me",
-                              headers=_headers, timeout=15)
-                if me.status_code != 200:
-                    st.error(f"❌ Token invalid (HTTP {me.status_code}). Please sign out and reconnect.")
+                # Step 2: personal OneDrive search
+                r1 = _req.get(
+                    f"https://graph.microsoft.com/v1.0/me/drive/root/search"
+                    f"(q='{onedrive_folder}')?$select=id,name,webUrl,folder",
+                    headers=_headers, timeout=15)
+                hits = [i for i in r1.json().get("value",[]) if "folder" in i] if r1.status_code==200 else []
+                if hits:
+                    st.success(f"✅ Found in personal OneDrive: `{hits[0]['name']}`")
                 else:
-                    uname = me.json().get("displayName","?")
-                    st.success(f"✅ Token valid — signed in as **{uname}**")
+                    st.warning("⚠️ Not in personal OneDrive")
 
-                    # Step 2: search personal OneDrive
-                    r1 = _req.get(
-                        f"https://graph.microsoft.com/v1.0/me/drive/root/search"
-                        f"(q='{onedrive_folder}')?$select=id,name,webUrl,folder",
-                        headers=_headers, timeout=15)
-                    st.write(f"**Personal OneDrive search** → HTTP {r1.status_code}")
-                    if r1.status_code == 200:
-                        hits = [i for i in r1.json().get("value",[]) if "folder" in i]
-                        if hits:
-                            st.success(f"✅ Found in personal OneDrive: `{hits[0]['name']}` — id: `{hits[0]['id']}`")
-                        else:
-                            st.warning("⚠️ Not found in personal OneDrive")
-                    else:
-                        st.error(f"Search failed: {r1.text[:200]}")
-
-                    # Step 3: list SharePoint sites
+                    # Step 3: sharedWithMe (SharePoint/Teams folders shared with user)
                     r2 = _req.get(
-                        "https://graph.microsoft.com/v1.0/sites?search=*&$select=id,displayName",
+                        "https://graph.microsoft.com/v1.0/me/drive/sharedWithMe"
+                        "?$select=id,name,webUrl,folder,remoteItem",
                         headers=_headers, timeout=15)
-                    st.write(f"**SharePoint sites list** → HTTP {r2.status_code}")
+                    st.write(f"**Shared items search** → HTTP {r2.status_code}")
                     if r2.status_code == 200:
-                        sites = r2.json().get("value",[])
-                        st.write(f"Found {len(sites)} site(s): {[s.get('displayName') for s in sites[:5]]}")
-
-                        # Search each site
-                        found = False
-                        for site in sites:
-                            sid = site.get("id",""); sname = site.get("displayName","?")
-                            dr = _req.get(
-                                f"https://graph.microsoft.com/v1.0/sites/{sid}/drives?$select=id,name",
-                                headers=_headers, timeout=15)
-                            if dr.status_code == 200:
-                                for drive in dr.json().get("value",[]):
-                                    did = drive.get("id",""); dname = drive.get("name","?")
-                                    sr = _req.get(
-                                        f"https://graph.microsoft.com/v1.0/drives/{did}/root/search"
-                                        f"(q='{onedrive_folder}')?$select=id,name,webUrl,folder",
-                                        headers=_headers, timeout=15)
-                                    if sr.status_code == 200:
-                                        hits2 = [i for i in sr.json().get("value",[]) if "folder" in i]
-                                        if hits2:
-                                            st.success(f"✅ Found in **{sname}** / **{dname}**: `{hits2[0]['name']}`")
-                                            st.code(f"Folder ID: {hits2[0]['id']}")
-                                            found = True
-                                            break
-                                if found: break
-                        if not found:
-                            st.error(f"❌ Folder not found in any SharePoint site either.")
+                        all_shared = r2.json().get("value", [])
+                        st.write(f"Total shared items: {len(all_shared)}")
+                        # Show all shared folder names for reference
+                        shared_names = [i.get("name","?") for i in all_shared
+                                        if "folder" in i or "folder" in i.get("remoteItem",{})]
+                        if shared_names:
+                            st.write(f"Shared folders found: {shared_names}")
+                        matches = [i for i in all_shared
+                                   if onedrive_folder.lower() in i.get("name","").lower()
+                                   and ("folder" in i or "folder" in i.get("remoteItem",{}))]
+                        if matches:
+                            st.success(f"✅ Found in shared items: `{matches[0]['name']}`")
+                        else:
+                            st.error(
+                                f"❌ Folder **'{onedrive_folder}'** not found in shared items.\n\n"
+                                f"The folder name above shows all shared folders — "
+                                f"check if the name matches exactly.")
                     else:
-                        st.error(f"Could not list SharePoint sites: {r2.text[:300]}")
+                        st.error(f"Could not access shared items: {r2.text[:200]}")
     else:
         st.markdown(
             '<p style="font-size:13px;color:rgba(255,255,255,.6);margin-bottom:8px">'

@@ -27,7 +27,18 @@ INTRO_TPL = BASE_DIR / "assets" / "intro_template.mp4"
 SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 
 # Badge fallback (used only if auto-detection finds nothing)
-_BADGE_FALLBACK = (1420, 880, 320, 100)  # x, y, w, h in 1920x1080 space
+# Fixed white box that covers the NotebookLM badge (measured from reference video).
+# Background is near-white so the box is invisible — only the SLC logo shows.
+# Box is generous to cover badge regardless of minor template differences.
+# White box covers the NotebookLM badge — measured from reference video (1920x1080).
+# Background is near-white so the box is invisible; only the SLC logo shows.
+WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1700, 963, 114, 72
+
+# SLC logo anchored to bottom-right corner (measured from reference video).
+# scale=-1:LOGO_H lets FFmpeg auto-calculate width to preserve aspect ratio.
+LOGO_H             = 56   # pixels tall  (= logo height in reference)
+LOGO_RIGHT_MARGIN  = 114  # pixels from right edge
+LOGO_BOTTOM_MARGIN = 53   # pixels from bottom edge
 
 # Rounded-corner radius for white boxes
 BOX_RADIUS = 10
@@ -226,71 +237,6 @@ def normalise(inp, out):
     cmd += [str(out)];  _ff(cmd);  return Path(out)
 
 
-def _detect_badge_position(norm_video_path):
-    """
-    Auto-detect the NotebookLM badge position.
-
-    Samples 3 frames (25%, 50%, 75%) and scans the bottom-right region
-    of each for the badge (dark text cluster on near-white background).
-
-    Scan window: bottom 40% of height, right 40% of width.
-    This covers all known NB badge positions (y=60%..95% of frame).
-
-    Returns (brx, bry, brw, brh) padded by 16px, or fallback defaults.
-    """
-    best = None
-    try:
-        duration = _probe_duration(norm_video_path)
-        for frac in (0.25, 0.50, 0.75):
-            sample_t = duration * frac
-            fd, tf   = tempfile.mkstemp(suffix=".jpg")
-            os.close(fd)
-            try:
-                subprocess.run(
-                    ["ffmpeg", "-y", "-ss", f"{sample_t:.2f}",
-                     "-i", str(norm_video_path), "-vframes", "1", tf],
-                    capture_output=True, timeout=10)
-                img = Image.open(tf)
-                a   = np.array(img)
-                H, W = a.shape[:2]
-
-                # Scan bottom 40% of frame, right 40% of width.
-                # NotebookLM badges appear anywhere from y=60% to y=95%.
-                ys = int(H * 0.60);  xs = int(W * 0.60)
-                region = a[ys:, xs:]
-
-                # Skip dark frames (transitions/intro)
-                if region.mean() < 160:
-                    continue
-
-                # Badge = dark pixels on near-white background
-                near_white = (region.mean(axis=2) > 190).mean()
-                dark       = region.mean(axis=2) < 130
-                rows, cols = np.where(dark)
-
-                if near_white < 0.45 or len(rows) < 20:
-                    continue
-
-                pad  = 16
-                brx  = max(0, xs + int(cols.min()) - pad)
-                bry  = max(0, ys + int(rows.min()) - pad)
-                brw  = int(cols.max() - cols.min()) + pad * 2
-                brh  = int(rows.max() - rows.min()) + pad * 2
-
-                # Badge must be a reasonable size (not the whole slide)
-                if 40 < brw < 550 and 20 < brh < 200:
-                    # Prefer candidate closest to bottom-right corner
-                    corner_dist = (W - (brx + brw)) + (H - (bry + brh))
-                    if best is None or corner_dist < best[1]:
-                        best = ((brx, bry, brw, brh), corner_dist)
-
-            finally:
-                try: os.unlink(tf)
-                except OSError: pass
-    except Exception:
-        pass
-
-    return best[0] if best else _BADGE_FALLBACK
 
 
 def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None):  # src_resolution kept for API compat
@@ -304,8 +250,8 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
         Rounded white box covers centred icon + notebooklm.google.com URL.
     """
     inp_str, out_str = str(inp), str(out)
-    # Auto-detect badge from the actual video frame — works for any template
-    brx, bry, brw, brh = _detect_badge_position(inp_str)
+    # Fixed badge cover box — measured from reference video
+    brx, bry, brw, brh = WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H
 
     if progress_cb:
         progress_cb("Detecting end-card start time…")
@@ -319,9 +265,6 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
     _make_box_png([(WM_EC_X, WM_EC_Y, WM_EC_W, WM_EC_H, EC_RADIUS)], ec_png)
 
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
-    logo_h   = brh - 8                  # logo height = box height - 4px padding each side
-    logo_cx  = brx + brw // 2           # centre x of the white box
-    logo_cy  = bry + brh // 2           # centre y of the white box
 
     if use_logo:
         # inputs: 0=video  1=br_png  2=ec_png  3=logo
@@ -332,8 +275,8 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
             "[0:v][br]overlay=x=0:y=0[v1];"
             "[2:v]format=rgba[ec];"
             f"[v1][ec]overlay=x=0:y=0:enable='{enable_ec}'[v2];"
-            f"[3:v]scale=-1:{logo_h}[logo];"
-            f"[v2][logo]overlay=x='{logo_cx}-(w/2)':y='{logo_cy}-(h/2)'[vout]"
+            f"[3:v]scale=-1:{LOGO_H}[logo];"
+            f"[v2][logo]overlay=x='W-w-113':y='H-h-53'[vout]"
         )
         cmd = [
             "ffmpeg", "-y",

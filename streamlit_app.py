@@ -395,6 +395,57 @@ def _check_template():
 _check_template()
 
 
+# ───────────────────── ONEDRIVE UPLOAD ──────────────────────────────────────
+def _upload_to_onedrive(data: bytes, filename: str, sharing_url: str) -> str | None:
+    """
+    Upload video bytes to a OneDrive shared folder using just the sharing link.
+    No app registration or OAuth needed — works when the folder sharing link
+    is set to 'Anyone with the link can edit'.
+
+    Returns None on success, or an error string on failure.
+    """
+    import base64, urllib.request, urllib.error, json
+
+    # Encode the sharing URL per Microsoft Graph API spec:
+    # base64url(url) with trailing '=' removed, prefixed with 'u!'
+    b64 = base64.urlsafe_b64encode(sharing_url.encode()).rstrip(b"=").decode()
+    encoded_url = "u!" + b64
+
+    upload_endpoint = (
+        f"https://graph.microsoft.com/v1.0/shares/{encoded_url}"
+        f"/root:/{filename}:/content"
+    )
+
+    req = urllib.request.Request(
+        upload_endpoint,
+        data=data,
+        method="PUT",
+        headers={"Content-Type": "video/mp4"},
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            if resp.status in (200, 201):
+                return None   # success
+            return f"Unexpected status {resp.status}"
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        try:
+            msg = json.loads(body).get("error", {}).get("message", body)
+        except Exception:
+            msg = body[:300]
+        # Helpful hint for the most common error
+        if e.code == 401:
+            msg = ("Not authorised. Make sure the sharing link is set to "
+                   "'Anyone with the link can EDIT' (not just view).")
+        elif e.code == 403:
+            msg = ("Forbidden. The link may be view-only. Change it to "
+                   "'Anyone with the link can edit' in OneDrive sharing settings.")
+        return f"HTTP {e.code}: {msg}"
+    except Exception as e:
+        return str(e)
+
+
 # ───────────────────────── CSS ────────────────────────────────────────────
 st.markdown("""<style>
 .stApp{background:linear-gradient(135deg,#0a2a3c 0%,#0d3b54 30%,#0f4c6e 60%,#1a3a5c 100%)}
@@ -547,6 +598,29 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
 
             st.download_button("⬇ Download Final Video", data, filename,
                                "video/mp4", use_container_width=True)
+
+            # ── OneDrive upload ───────────────────────────────────────
+            st.markdown("---")
+            st.markdown('<div style="margin:8px 0"><span class="sn">☁</span>'
+                '<span class="st">Save to OneDrive</span></div>',
+                unsafe_allow_html=True)
+            onedrive_url = st.text_input(
+                "Paste your OneDrive folder sharing link",
+                placeholder="https://...sharepoint.com/:f:/g/...",
+                key="onedrive_url",
+                help="Right-click the folder in OneDrive → Share → "
+                     "Copy link (must be set to 'Anyone with the link can edit')",
+            )
+            if st.button("☁ Upload to OneDrive", use_container_width=True):
+                if not onedrive_url.strip():
+                    st.warning("Paste the OneDrive sharing link first.")
+                else:
+                    with st.spinner("Uploading to OneDrive…"):
+                        err = _upload_to_onedrive(data, filename, onedrive_url.strip())
+                        if err:
+                            st.error(f"Upload failed: {err}")
+                        else:
+                            st.success(f"✅ Uploaded **{filename}** to OneDrive folder.")
 
         except Exception as e:
             bar.empty();  msg.empty()

@@ -68,11 +68,11 @@ def _ft(path, size):
     except: return ImageFont.load_default()
 
 
-def _make_box_png(boxes, path, W=1920, H=1080):
+def _make_box_png(boxes, path, W=1920, H=1080, colour=(255,255,255,255)):
     img  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     for (x, y, w, h, r) in boxes:
-        draw.rounded_rectangle([x, y, x+w, y+h], radius=r, fill=(255,255,255,255))
+        draw.rounded_rectangle([x, y, x+w, y+h], radius=r, fill=colour)
     img.save(str(path), "PNG")
     return path
 
@@ -216,7 +216,7 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
     enable_ec = f"gte(t\\,{ecs:.2f})"
 
     br_png = tmp/"wm_br.png"; ec_png = tmp/"wm_ec.png"
-    _make_box_png([(WM_BR_X,WM_BR_Y,WM_BR_W,WM_BR_H,BOX_RADIUS)], br_png)
+    _make_box_png([(WM_BR_X,WM_BR_Y,WM_BR_W,WM_BR_H,BOX_RADIUS)], br_png, colour=(249,249,249,255))
     _make_box_png([(WM_EC_X,WM_EC_Y,WM_EC_W,WM_EC_H,EC_RADIUS)], ec_png)
 
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
@@ -228,7 +228,7 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
             "[2:v]format=rgba[ec];"
             f"[v1][ec]overlay=x=0:y=0:enable='{enable_ec}'[v2];"
             f"[3:v]scale=-1:{LOGO_H}[logo];"
-            f"[v2][logo]overlay=x='W-w-{LOGO_RIGHT_MARGIN}':y='H-h-{LOGO_BOTTOM_MARGIN}'[vout]"
+            "[v2][logo]overlay=x='1776-(w/2)':y='1000-(h/2)'[vout]"
         )
         cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(br_png),"-i",str(ec_png),
                "-i",str(SLC_LOGO),"-filter_complex",fc,"-map","[vout]","-map","0:a",

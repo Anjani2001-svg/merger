@@ -1,4 +1,4 @@
-\#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 SLC Video Merger – Streamlit Edition
 All text is rendered by Pillow (no FFmpeg drawtext = no escaping bugs).

@@ -36,13 +36,13 @@ SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 TOKEN_CACHE_FILE = BASE_DIR / "assets" / "ms_token_cache.json"
 
 # ── Watermark / badge cover ───────────────────────────────────────────────
-WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1660, 954, 240, 94
+WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1655, 960, 240, 72
 BOX_RADIUS = 10
 WM_EC_X, WM_EC_Y, WM_EC_W, WM_EC_H = 448, 310, 1024, 420
 EC_RADIUS  = 14
 
 # ── SLC logo placement (anchored bottom-right, measured from reference) ───
-LOGO_H            = 57
+LOGO_H            = 44   # scaled to fit neatly inside 72px box
 LOGO_RIGHT_MARGIN = 113
 LOGO_BOTTOM_MARGIN = 53
 
@@ -431,37 +431,69 @@ def _complete_device_flow():
 
 def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str):
     """
-    Upload data to OneDrive. Searches for folder_name in the user's OneDrive
-    and uploads the file there. Uses chunked upload session for large files.
+    Upload data to OneDrive/SharePoint. Searches personal OneDrive AND
+    all SharePoint sites the user has access to.
     Returns (True, web_url) or (False, error_message).
     """
     headers = {"Authorization": f"Bearer {token}"}
 
-    # ── 1. Find the target folder by name ────────────────────────────
-    search_url = (
-        f"https://graph.microsoft.com/v1.0/me/drive/root/search"
-        f"(q='{folder_name}')?$select=id,name,webUrl,folder"
-    )
-    r = requests.get(search_url, headers=headers, timeout=30)
-    if r.status_code != 200:
-        return False, f"Could not search OneDrive (HTTP {r.status_code}): {r.text[:200]}"
+    def _search_drive(drive_url):
+        """Search a drive for folder_name. Returns folder dict or None."""
+        url = f"{drive_url}/root/search(q='{folder_name}')?$select=id,name,webUrl,folder,parentReference"
+        r = requests.get(url, headers=headers, timeout=30)
+        if r.status_code != 200:
+            return None
+        items = r.json().get("value", [])
+        folders = [i for i in items if "folder" in i
+                   and folder_name.lower() in i["name"].lower()]
+        if not folders:
+            return None
+        return next((f for f in folders if f["name"] == folder_name), folders[0])
 
-    items = r.json().get("value", [])
-    folders = [i for i in items if "folder" in i and folder_name.lower() in i["name"].lower()]
+    # ── 1. Search personal OneDrive first ────────────────────────────
+    folder = _search_drive("https://graph.microsoft.com/v1.0/me/drive")
 
-    if not folders:
-        return False, (f"Folder '{folder_name}' not found in your OneDrive. "
-                       f"Make sure the folder name is correct.")
+    # ── 2. If not found, search SharePoint/Teams drives ──────────────
+    if not folder:
+        sites_r = requests.get(
+            "https://graph.microsoft.com/v1.0/sites?search=*&$select=id,displayName",
+            headers=headers, timeout=30)
+        if sites_r.status_code == 200:
+            for site in sites_r.json().get("value", []):
+                site_id = site.get("id", "")
+                drives_r = requests.get(
+                    f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives?$select=id,name",
+                    headers=headers, timeout=30)
+                if drives_r.status_code == 200:
+                    for drive in drives_r.json().get("value", []):
+                        drive_id = drive.get("id", "")
+                        folder = _search_drive(
+                            f"https://graph.microsoft.com/v1.0/drives/{drive_id}")
+                        if folder:
+                            break
+                if folder:
+                    break
 
-    # Pick best match (exact name match preferred)
-    folder = next((f for f in folders if f["name"] == folder_name), folders[0])
-    folder_id = folder["id"]
+    if not folder:
+        return False, (
+            f"Folder '{folder_name}' not found in your OneDrive or SharePoint.\n\n"
+            f"Tip: Make sure the folder name matches exactly. "
+            f"The folder was searched in your personal OneDrive and all SharePoint sites."
+        )
+
+    # Get the drive ID from the folder's parentReference
+    drive_id   = folder.get("parentReference", {}).get("driveId", "")
+    folder_id  = folder["id"]
+
+    if not drive_id:
+        # Fall back to personal drive
+        drive_id = "me/drive"
+        session_base = f"https://graph.microsoft.com/v1.0/me/drive/items/{folder_id}"
+    else:
+        session_base = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{folder_id}"
 
     # ── 2. Create upload session ──────────────────────────────────────
-    session_url = (
-        f"https://graph.microsoft.com/v1.0/me/drive/items/{folder_id}"
-        f":/{filename}:/createUploadSession"
-    )
+    session_url = f"{session_base}:/{filename}:/createUploadSession"
     session_body = {"item": {"@microsoft.graph.conflictBehavior": "rename"}}
     r2 = requests.post(session_url, headers={**headers, "Content-Type": "application/json"},
                        json=session_body, timeout=30)

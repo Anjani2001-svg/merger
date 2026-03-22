@@ -510,33 +510,55 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, s
 
     upload_url = r2.json()["uploadUrl"]
 
-    # ── 5. Upload in 10 MB chunks ─────────────────────────────────────
-    CHUNK    = 10 * 1024 * 1024
+    # ── 5. Upload in 5 MB chunks (smaller = safer on Streamlit Cloud) ──
+    CHUNK    = 5 * 1024 * 1024   # 5 MB — must be multiple of 320 KB
     total    = len(data)
     uploaded = 0
     file_web_url = None
+    last_pct = -1
 
     while uploaded < total:
         chunk     = data[uploaded: uploaded + CHUNK]
         chunk_end = uploaded + len(chunk) - 1
         pct       = int(uploaded / total * 100)
-        if uploaded > 0:
-            _cb(f"⬆️ Uploading… {pct}% ({uploaded//1048576}/{total//1048576} MB)")
-        r3 = requests.put(upload_url, data=chunk, timeout=120, headers={
-            "Content-Length": str(len(chunk)),
-            "Content-Range":  f"bytes {uploaded}-{chunk_end}/{total}",
-            "Content-Type":   "video/mp4",
-        })
+
+        # Only log every 10% to avoid spamming
+        if pct // 10 != last_pct // 10:
+            _cb(f"⬆️ Uploading… {pct}% ({uploaded//1048576} / {total//1048576} MB)")
+            last_pct = pct
+
+        r3 = requests.put(
+            upload_url,
+            data=chunk,
+            timeout=180,   # 3 min per chunk
+            headers={
+                "Content-Length": str(len(chunk)),
+                "Content-Range":  f"bytes {uploaded}-{chunk_end}/{total}",
+                "Content-Type":   "video/mp4",
+            })
+
         if r3.status_code in (200, 201):
-            file_web_url = r3.json().get("webUrl", "")
+            # Final chunk acknowledged — file is written
+            try:
+                file_web_url = r3.json().get("webUrl", "")
+            except Exception:
+                file_web_url = ""
         elif r3.status_code == 202:
+            # Chunk accepted, more to send
             pass
         else:
-            return False, f"Upload failed at {uploaded} bytes (HTTP {r3.status_code}): {r3.text[:200]}"
+            return False, (
+                f"Upload failed at byte {uploaded} "
+                f"(HTTP {r3.status_code}): {r3.text[:300]}"
+            )
+
         uploaded += len(chunk)
 
-    _cb("✅ Upload complete!")
-    return True, file_web_url or "https://onedrive.live.com"
+    if uploaded >= total:
+        _cb(f"✅ Upload complete! ({total//1048576} MB uploaded)")
+        return True, file_web_url or "https://onedrive.live.com"
+    else:
+        return False, f"Upload incomplete — only {uploaded} of {total} bytes sent."
 
 
 def _check_template():

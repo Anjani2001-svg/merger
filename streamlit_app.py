@@ -798,48 +798,68 @@ if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
             data = final.read_bytes(); mb = len(data)/1048576
             msg.empty(); bar.empty()
 
-            st.markdown(f"""<div class="ok">
-                <div style="font-size:48px;margin-bottom:8px">✅</div>
-                <h3>Video Ready!</h3>
-                <p style="color:rgba(255,255,255,.5);font-size:13px">
-                    {secs:.1f}s &nbsp;•&nbsp; {mb:.1f} MB</p>
-            </div>""", unsafe_allow_html=True)
-
-            st.markdown('<div style="margin:16px 0"><span class="sn">▶</span>'
-                '<span class="st">Preview</span></div>', unsafe_allow_html=True)
-            st.video(data, format="video/mp4")
-
+            # Save to session_state so upload button works after rerun
             safec    = course_name[:30].replace(" ","_")
             safeu    = unit_number.replace(" ","_").replace("|","")
             filename = f"SLC_Video_{safec}_{safeu}.mp4"
-
-            st.download_button("⬇ Download Final Video", data, filename,
-                               "video/mp4", use_container_width=True)
-
-            # ── OneDrive upload ───────────────────────────────────────
-            current_token = _get_access_token()
-            if current_token and onedrive_folder:
-                st.markdown("---")
-                st.markdown('<div style="margin:8px 0"><span class="sn">☁</span>'
-                    '<span class="st">Save to OneDrive</span></div>', unsafe_allow_html=True)
-                if st.button("☁ Upload to OneDrive", use_container_width=True):
-                    status_box = st.container()
-                    log_msgs   = []
-                    def _log(s):
-                        log_msgs.append(s)
-                        with status_box:
-                            for m in log_msgs:
-                                st.write(m)
-                    _log("🔍 Searching for folder…")
-                    ok, result = _onedrive_upload(
-                        data, filename, onedrive_folder, current_token,
-                        status_cb=_log
-                    )
-                    if ok:
-                        st.success(f"✅ Uploaded! [Open in OneDrive]({result})")
-                    else:
-                        st.error(result)
+            st.session_state["video_data"]     = data
+            st.session_state["video_filename"] = filename
+            st.session_state["video_mb"]       = mb
+            st.session_state["video_secs"]     = secs
 
         except Exception as e:
             bar.empty(); msg.empty()
             st.error(f"**Processing failed:**\n\n```\n{e}\n```")
+
+# ── Show result + download + upload (outside temp dir, persists on rerun) ─
+if st.session_state.get("video_data"):
+    data     = st.session_state["video_data"]
+    filename = st.session_state["video_filename"]
+    mb       = st.session_state["video_mb"]
+    secs     = st.session_state["video_secs"]
+
+    st.markdown(f"""<div class="ok">
+        <div style="font-size:48px;margin-bottom:8px">✅</div>
+        <h3>Video Ready!</h3>
+        <p style="color:rgba(255,255,255,.5);font-size:13px">
+            {secs:.1f}s &nbsp;•&nbsp; {mb:.1f} MB</p>
+    </div>""", unsafe_allow_html=True)
+
+    st.markdown('<div style="margin:16px 0"><span class="sn">▶</span>'
+        '<span class="st">Preview</span></div>', unsafe_allow_html=True)
+    st.video(data, format="video/mp4")
+
+    st.download_button("⬇ Download Final Video", data, filename,
+                       "video/mp4", use_container_width=True)
+
+    # ── OneDrive upload ───────────────────────────────────────────────
+    current_token = _get_access_token()
+    if current_token and onedrive_folder:
+        st.markdown("---")
+        st.markdown('<div style="margin:8px 0"><span class="sn">☁</span>'
+            '<span class="st">Save to OneDrive</span></div>', unsafe_allow_html=True)
+        if st.button("☁ Upload to OneDrive", use_container_width=True):
+            prog = st.progress(0, "Starting upload…")
+            stat = st.empty()
+
+            def _log(s):
+                stat.info(s)
+                # Update progress bar based on percentage in message
+                if "%" in s:
+                    try:
+                        pct = int(s.split("%")[0].split()[-1])
+                        prog.progress(pct, s)
+                    except Exception:
+                        pass
+
+            ok, result = _onedrive_upload(
+                data, filename, onedrive_folder, current_token,
+                status_cb=_log
+            )
+            prog.empty()
+            if ok:
+                stat.empty()
+                st.success(f"✅ Uploaded **{filename}** to OneDrive! [Open file]({result})")
+            else:
+                stat.empty()
+                st.error(result)

@@ -262,51 +262,56 @@ def normalise(inp, out):
 
 def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None):
     inp_str, out_str = str(inp), str(out)
-    if progress_cb: progress_cb("Detecting end-card start time…")
-    ecs = _detect_end_card_start(inp_str)
-    enable_ec = f"gte(t\\,{ecs:.2f})"
 
-    ec_png = tmp/"wm_ec.png"
-    _make_ec_png(ec_png)
+    if progress_cb: progress_cb("Detecting end-card start time…")
+    ecs      = _detect_end_card_start(inp_str)
+    duration = _probe_duration(inp_str)
+
+    # If end card detected, trim video at that point instead of covering it.
+    # Only trim if end card starts with at least 2 s of content remaining
+    # (guards against false positives on all-white title slides).
+    trim_at = None
+    if ecs < duration - 2.0:
+        trim_at = ecs
+        if progress_cb: progress_cb(f"✂️ Trimming end card at {ecs:.1f}s…")
 
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
     if use_logo:
-        # Render logo composite PNG (box + centred logo)
-        # draws the background box — no separate br_png needed
         comp_png = _make_logo_composite(
             logo_path=SLC_LOGO,
             box=(WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H),
         )
         fc = (
             "[1:v]format=rgba[comp];"
-            "[0:v][comp]overlay=x=0:y=0[v1];"
-            "[2:v]format=rgba[ec];"
-            f"[v1][ec]overlay=x=0:y=0:enable='{enable_ec}'[vout]"
+            "[0:v][comp]overlay=x=0:y=0[vout]"
         )
-        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(comp_png),"-i",str(ec_png),
-               "-filter_complex",fc,"-map","[vout]","-map","0:a",
-               "-c:v","libx264","-preset","ultrafast","-crf","23",
-               "-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
-               "-r","30","-pix_fmt","yuv420p","-shortest",out_str]
+        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(comp_png)]
     else:
-        # No logo — just draw the background box
         br_png = tmp/"wm_br.png"
         _make_box_png([(WM_BR_X,WM_BR_Y,WM_BR_W,WM_BR_H,BOX_RADIUS)],
                       br_png, colour=(249,249,249,255))
         fc = (
             "[1:v]format=rgba[br];"
-            "[0:v][br]overlay=x=0:y=0[v1];"
-            "[2:v]format=rgba[ec];"
-            f"[v1][ec]overlay=x=0:y=0:enable='{enable_ec}'[vout]"
+            "[0:v][br]overlay=x=0:y=0[vout]"
         )
-        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(br_png),"-i",str(ec_png),
-               "-filter_complex",fc,"-map","[vout]","-map","0:a",
-               "-c:v","libx264","-preset","ultrafast","-crf","23",
-               "-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
-               "-r","30","-pix_fmt","yuv420p","-shortest",out_str]
+        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(br_png)]
 
-    duration = _probe_duration(inp_str)
+    # Add trim via -t if end card was detected
+    if trim_at is not None:
+        cmd += ["-filter_complex", fc,
+                "-map","[vout]","-map","0:a",
+                "-t", f"{trim_at:.2f}",
+                "-c:v","libx264","-preset","ultrafast","-crf","23",
+                "-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
+                "-r","30","-pix_fmt","yuv420p",out_str]
+    else:
+        cmd += ["-filter_complex", fc,
+                "-map","[vout]","-map","0:a",
+                "-c:v","libx264","-preset","ultrafast","-crf","23",
+                "-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
+                "-r","30","-pix_fmt","yuv420p","-shortest",out_str]
+
     _ff(cmd, timeout=max(900, int(duration*25)))
     return Path(out)
 

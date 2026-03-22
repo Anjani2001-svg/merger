@@ -499,14 +499,32 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, s
 
     # ── 4. Create upload session ──────────────────────────────────────
     _cb("⬆️ Creating upload session…")
-    session_url  = (f"https://graph.microsoft.com/v1.0/{drive_prefix}/items"
-                    f"/{folder_id}:/{filename}:/createUploadSession")
-    r2 = requests.post(session_url, headers=h,
-                       json={"item": {"@microsoft.graph.conflictBehavior": "rename"}},
-                       timeout=30)
-    _cb(f"   Session response: HTTP {r2.status_code}")
-    if r2.status_code not in (200, 201):
-        return False, (f"Upload session failed (HTTP {r2.status_code}): {r2.text[:300]}")
+
+    # Build URL — try two formats, the second as fallback
+    safe_name = filename.replace(" ", "_")
+    urls_to_try = [
+        # Format 1: item-based (works when we have driveId + itemId)
+        f"https://graph.microsoft.com/v1.0/{drive_prefix}/items/{folder_id}:/{safe_name}:/createUploadSession",
+        # Format 2: path-based on personal drive root (always works for personal drive)
+        f"https://graph.microsoft.com/v1.0/me/drive/root:/{folder_name}/{safe_name}:/createUploadSession",
+    ]
+
+    r2 = None
+    for i, session_url in enumerate(urls_to_try):
+        _cb(f"   Trying URL format {i+1}…")
+        r2 = requests.post(
+            session_url, headers=h,
+            json={"item": {"@microsoft.graph.conflictBehavior": "rename"}},
+            timeout=30)
+        _cb(f"   Response: HTTP {r2.status_code}")
+        if r2.status_code in (200, 201):
+            break
+
+    if r2 is None or r2.status_code not in (200, 201):
+        return False, (
+            f"Upload session failed (HTTP {r2.status_code if r2 else '?'}): "
+            f"{r2.text[:300] if r2 else 'No response'}"
+        )
 
     upload_url = r2.json()["uploadUrl"]
 

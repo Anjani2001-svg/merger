@@ -429,7 +429,7 @@ def _complete_device_flow():
     return False, err
 
 
-def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, status_cb=None):
+def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, status_cb=None, **kwargs):
     """
     Upload video to OneDrive folder. Searches personal drive then shared items.
     Returns (True, web_url) or (False, error_message).
@@ -458,6 +458,29 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, s
             drive_id_ref = item.get("parentReference", {}).get("driveId", "")
             drive_prefix = f"drives/{drive_id_ref}" if drive_id_ref else "me/drive"
             _cb(f"✅ Found in personal OneDrive: '{item['name']}'")
+
+    # ── 1b. Resolve from pasted folder URL (most reliable for shared folders) ─
+    folder_url = kwargs.get("folder_url", "").strip()
+    if not folder_id and folder_url:
+        _cb("🔗 Resolving folder from URL…")
+        try:
+            import base64 as _b64
+            b64 = _b64.urlsafe_b64encode(folder_url.encode()).rstrip(b"=").decode()
+            encoded = "u!" + b64
+            share_r = requests.get(
+                f"https://graph.microsoft.com/v1.0/shares/{encoded}/root"
+                "?$select=id,name,webUrl,parentReference",
+                headers=h, timeout=20)
+            if share_r.status_code == 200:
+                item         = share_r.json()
+                folder_id    = item["id"]
+                drv          = item.get("parentReference", {}).get("driveId", "")
+                drive_prefix = f"drives/{drv}" if drv else "me/drive"
+                _cb(f"✅ Resolved from URL: '{item.get('name','?')}'")
+            else:
+                _cb(f"⚠️ URL resolve failed (HTTP {share_r.status_code}) — trying search…")
+        except Exception as ex:
+            _cb(f"⚠️ URL parse error: {ex} — trying search…")
 
     # ── 2. Search shared items ────────────────────────────────────────
     if not folder_id:
@@ -681,6 +704,15 @@ else:
             help="Type the exact folder name in your OneDrive where videos should be saved.",
         )
 
+        # Paste folder URL for shared folders (more reliable than search)
+        onedrive_url_input = st.text_input(
+            "Or paste the OneDrive folder URL (for shared folders)",
+            placeholder="https://...sharepoint.com/...id=%2Fpersonal%2F...",
+            help="Open the shared folder in OneDrive → copy the URL from your browser address bar → paste here. This bypasses the search and works for any shared folder.",
+        )
+        if onedrive_url_input.strip():
+            st.info("📎 Folder URL provided — will use this instead of searching by name.")
+
         # ── Test connection button ─────────────────────────────────
         if st.button("🔍 Test Folder Connection", type="secondary"):
             import requests as _req
@@ -775,6 +807,10 @@ st.markdown('<div><span class="sn">3</span><span class="st">Generate Final Video
 st.markdown('<p style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:16px">'
     'Merges intro + transition + NotebookLM video (watermarks replaced) + outro.</p>',
     unsafe_allow_html=True)
+
+# Store folder URL in session state so it's available after rerun
+if "onedrive_url_input" in dir() and onedrive_url_input.strip():
+    st.session_state["_od_url"] = onedrive_url_input.strip()
 
 if st.button("🎬 Merge & Download", type="primary", use_container_width=True):
     if not course_name: st.error("Enter a course name."); st.stop()
@@ -878,7 +914,8 @@ if st.session_state.get("video_data"):
 
             ok, result = _onedrive_upload(
                 data, filename, onedrive_folder, current_token,
-                status_cb=_log
+                status_cb=_log,
+                folder_url=st.session_state.get("_od_url", ""),
             )
             prog.empty()
             if ok:

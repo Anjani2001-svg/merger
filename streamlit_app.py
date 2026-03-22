@@ -897,11 +897,10 @@ if st.session_state.get("video_data"):
 
     # ── OneDrive upload ───────────────────────────────────────────────
     current_token = _get_access_token()
-    # Read folder settings from session_state so they survive reruns
-    _od_folder = st.session_state.get("_od_folder", "")
-    if current_token and _od_folder:
-        onedrive_folder = _od_folder
-    if current_token and _od_folder:
+    # Use session_state folder, fall back to default so it always shows
+    _od_folder = (st.session_state.get("_od_folder")
+                  or "NotebookLM Overview Videos for SLC")
+    if current_token:
         st.markdown("---")
         st.markdown('<div style="margin:8px 0"><span class="sn">☁</span>'
             '<span class="st">Save to OneDrive</span></div>', unsafe_allow_html=True)

@@ -700,17 +700,20 @@ else:
             st.rerun()
         onedrive_folder = st.text_input(
             "OneDrive folder name",
-            value="NotebookLM Overview Videos for SLC",
+            value=st.session_state.get("_od_folder", "NotebookLM Overview Videos for SLC"),
             help="Type the exact folder name in your OneDrive where videos should be saved.",
         )
+        st.session_state["_od_folder"] = onedrive_folder
 
         # Paste folder URL for shared folders (more reliable than search)
         onedrive_url_input = st.text_input(
             "Or paste the OneDrive folder URL (for shared folders)",
+            value=st.session_state.get("_od_url", ""),
             placeholder="https://...sharepoint.com/...id=%2Fpersonal%2F...",
             help="Open the shared folder in OneDrive → copy the URL from your browser address bar → paste here. This bypasses the search and works for any shared folder.",
         )
         if onedrive_url_input.strip():
+            st.session_state["_od_url"] = onedrive_url_input.strip()
             st.info("📎 Folder URL provided — will use this instead of searching by name.")
 
         # ── Test connection button ─────────────────────────────────
@@ -894,7 +897,11 @@ if st.session_state.get("video_data"):
 
     # ── OneDrive upload ───────────────────────────────────────────────
     current_token = _get_access_token()
-    if current_token and onedrive_folder:
+    # Read folder settings from session_state so they survive reruns
+    _od_folder = st.session_state.get("_od_folder", "")
+    if current_token and _od_folder:
+        onedrive_folder = _od_folder
+    if current_token and _od_folder:
         st.markdown("---")
         st.markdown('<div style="margin:8px 0"><span class="sn">☁</span>'
             '<span class="st">Save to OneDrive</span></div>', unsafe_allow_html=True)
@@ -913,7 +920,7 @@ if st.session_state.get("video_data"):
                         pass
 
             ok, result = _onedrive_upload(
-                data, filename, onedrive_folder, current_token,
+                data, filename, _od_folder, current_token,
                 status_cb=_log,
                 folder_url=st.session_state.get("_od_url", ""),
             )

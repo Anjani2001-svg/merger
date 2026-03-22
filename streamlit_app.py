@@ -473,12 +473,16 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, s
 
         for item in all_items:
             if folder_name.lower() in item.get("name", "").lower():
-                remote    = item.get("remoteItem", {})
-                folder_id = remote.get("id") or item.get("id")
-                drv       = (remote.get("parentReference", {}).get("driveId")
-                             or item.get("parentReference", {}).get("driveId", ""))
+                remote       = item.get("remoteItem", {})
+                # Use remote item IDs for shared folders
+                remote_id    = remote.get("id", "")
+                remote_drive = (remote.get("parentReference", {}).get("driveId", "")
+                                or remote.get("sharepointIds", {}).get("siteId", ""))
+                folder_id    = remote_id or item.get("id", "")
+                drv          = (remote_drive
+                                or item.get("parentReference", {}).get("driveId", ""))
                 drive_prefix = f"drives/{drv}" if drv else "me/drive"
-                _cb(f"✅ Found in shared items: '{item['name']}'")
+                _cb(f"✅ Found in shared items: '{item['name']}' (drive: {drv[:20]}…)")
                 break
 
     # ── 3. Create folder in personal drive if still not found ─────────
@@ -500,13 +504,15 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, s
     # ── 4. Create upload session ──────────────────────────────────────
     _cb("⬆️ Creating upload session…")
 
-    # Build URL — try two formats, the second as fallback
+    # Build URL — try three formats in order of reliability
     safe_name = filename.replace(" ", "_")
     urls_to_try = [
-        # Format 1: item-based (works when we have driveId + itemId)
-        f"https://graph.microsoft.com/v1.0/{drive_prefix}/items/{folder_id}:/{safe_name}:/createUploadSession",
-        # Format 2: path-based on personal drive root (always works for personal drive)
+        # Format 1: path-based on personal drive (most reliable for personal folders)
         f"https://graph.microsoft.com/v1.0/me/drive/root:/{folder_name}/{safe_name}:/createUploadSession",
+        # Format 2: drive+item based (needed for shared/remote folders)
+        f"https://graph.microsoft.com/v1.0/{drive_prefix}/items/{folder_id}:/{safe_name}:/createUploadSession",
+        # Format 3: drive+item with original filename
+        f"https://graph.microsoft.com/v1.0/{drive_prefix}/items/{folder_id}:/{filename}:/createUploadSession",
     ]
 
     r2 = None

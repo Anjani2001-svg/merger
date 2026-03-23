@@ -470,25 +470,29 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, s
     drive_prefix = "me/drive"
     folder_url   = kwargs.get("folder_url", "").strip()
 
-    # ── 1. URL resolution (most reliable — works for any shared folder) ──
+    # ── 1. URL resolution ────────────────────────────────────────────
     if folder_url:
         _cb("🔗 Resolving folder from URL…")
         try:
             import base64 as _b64
-            b64     = _b64.urlsafe_b64encode(folder_url.encode()).rstrip(b"=").decode()
-            share_r = requests.get(
+            b64 = _b64.urlsafe_b64encode(folder_url.encode()).rstrip(b"=").decode()
+            for ep in [
                 f"https://graph.microsoft.com/v1.0/shares/u!{b64}/root"
                 "?$select=id,name,webUrl,parentReference",
-                headers=h, timeout=20)
-            _cb(f"   Share resolve → HTTP {share_r.status_code}")
-            if share_r.status_code == 200:
-                item         = share_r.json()
-                folder_id    = item["id"]
-                drv          = item.get("parentReference", {}).get("driveId", "")
-                drive_prefix = f"drives/{drv}" if drv else "me/drive"
-                _cb(f"✅ Folder resolved from URL: '{item.get('name','?')}'")
-            else:
-                _cb(f"⚠️ URL resolve failed ({share_r.status_code}): {share_r.text[:100]}")
+                f"https://graph.microsoft.com/v1.0/shares/u!{b64}/driveItem"
+                "?$select=id,name,webUrl,parentReference",
+            ]:
+                sr = requests.get(ep, headers=h, timeout=20)
+                _cb(f"   → HTTP {sr.status_code}")
+                if sr.status_code == 200:
+                    item         = sr.json()
+                    folder_id    = item["id"]
+                    drv          = item.get("parentReference", {}).get("driveId", "")
+                    drive_prefix = f"drives/{drv}" if drv else "me/drive"
+                    _cb(f"✅ Folder resolved: '{item.get('name','?')}'")
+                    break
+            if not folder_id:
+                _cb(f"⚠️ URL resolve failed ({sr.status_code}): {sr.text[:150]}")
         except Exception as ex:
             _cb(f"⚠️ URL error: {ex}")
 

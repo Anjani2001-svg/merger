@@ -544,23 +544,34 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, s
     ]
 
     r2 = None
+    errors = []
     for i, session_url in enumerate(urls_to_try):
-        _cb(f"   Trying URL format {i+1}…")
-        r2 = requests.post(
-            session_url, headers=h,
-            json={"item": {"@microsoft.graph.conflictBehavior": "rename"}},
-            timeout=30)
-        _cb(f"   Response: HTTP {r2.status_code}")
-        if r2.status_code in (200, 201):
-            break
+        _cb(f"   Trying URL format {i+1}: …{session_url[-60:]}")
+        try:
+            r2 = requests.post(
+                session_url, headers=h,
+                json={"item": {"@microsoft.graph.conflictBehavior": "rename"}},
+                timeout=30)
+            _cb(f"   Response: HTTP {r2.status_code}")
+            if r2.status_code in (200, 201):
+                break
+            else:
+                errors.append(f"Format {i+1} → HTTP {r2.status_code}: {r2.text[:100]}")
+                r2 = None
+        except Exception as ex:
+            errors.append(f"Format {i+1} → Exception: {ex}")
+            r2 = None
 
-    if r2 is None or r2.status_code not in (200, 201):
+    if r2 is None:
+        err_detail = "\n".join(errors)
         return False, (
-            f"Upload session failed (HTTP {r2.status_code if r2 else '?'}): "
-            f"{r2.text[:300] if r2 else 'No response'}"
+            f"❌ All upload session attempts failed:\n{err_detail}\n\n"
+            f"folder_id=`{folder_id}` drive=`{drive_prefix}`"
         )
 
-    upload_url = r2.json()["uploadUrl"]
+    upload_url = r2.json().get("uploadUrl")
+    if not upload_url:
+        return False, f"❌ No uploadUrl in response: {r2.text[:300]}"
 
     # ── 5. Upload in 5 MB chunks (smaller = safer on Streamlit Cloud) ──
     CHUNK    = 5 * 1024 * 1024   # 5 MB — must be multiple of 320 KB

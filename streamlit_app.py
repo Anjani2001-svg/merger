@@ -654,15 +654,15 @@ video{border-radius:12px;border:1px solid rgba(96,204,190,.2)}
 
 # ──────────────────────── HEADER ──────────────────────────────────────────
 st.markdown("""<div style="display:flex;align-items:center;gap:16px;margin-bottom:8px">
-  <h1 style="margin:0;font-size:28px">🎬 SLC Video Merger</h1>
+  <h1 style="margin:0;font-size:28px">🎬SLC Chapter Wise Video Creator</h1>
   <span style="background:#60ccbe;color:#0a2a3c;font-size:11px;font-weight:700;
         padding:3px 12px;border-radius:20px;text-transform:uppercase">Fast</span>
 </div>""", unsafe_allow_html=True)
 st.markdown("""<div style="text-align:center;margin:8px 0 24px">
-  <span class="fb">🎬 Custom Intro</span><span class="fa">→</span>
-  <span class="fb">🟪🟦🟩⬜ Transition</span><span class="fa">→</span>
-  <span class="fb">📹 NotebookLM Video</span><span class="fa">→</span>
-  <span class="fb">🔚 Outro</span>
+  <span class="fb">Custom Intro</span><span class="fa">→</span>
+  <span class="fb">Transition</span><span class="fa">→</span>
+  <span class="fb">NotebookLM Video</span><span class="fa">→</span>
+  <span class="fb">Outro</span>
 </div>""", unsafe_allow_html=True)
 
 # ── 1  INTRO ──────────────────────────────────────────────────────────────

@@ -698,33 +698,29 @@ else:
             TOKEN_CACHE_FILE.unlink(missing_ok=True)
             st.session_state.pop("ms_flow", None)
             st.rerun()
-        # ── Folder URL (primary method — works for shared folders) ──────
-        st.markdown("""
-        <div style="background:rgba(96,204,190,.08);border:1px solid rgba(96,204,190,.3);
-             border-radius:10px;padding:12px 16px;margin-bottom:10px;font-size:13px">
-        <strong style="color:#60ccbe">How to get the folder URL:</strong><br>
-        1. Open <a href="https://onedrive.live.com" target="_blank" style="color:#60ccbe">OneDrive</a>
-           → click <strong>Shared</strong> → open <strong>NotebookLM Overview Videos for SLC</strong><br>
-        2. Copy the full URL from your browser address bar<br>
-        3. Paste it below — saved automatically for future sessions
-        </div>""", unsafe_allow_html=True)
+        # ── Folder settings ───────────────────────────────────────────
+        onedrive_folder = st.text_input(
+            "📁 Destination folder name",
+            value=st.session_state.get("_od_folder", ""),
+            placeholder="e.g. My Videos",
+            help="Name of the folder in your personal OneDrive. For shared folders, paste the URL below instead.",
+        )
+        st.session_state["_od_folder"] = onedrive_folder
 
         onedrive_url_input = st.text_input(
-            "📋 OneDrive folder URL",
+            "🔗 Or paste folder URL (for shared folders)",
             value=st.session_state.get("_od_url", ""),
-            placeholder="https://imperiallearning-my.sharepoint.com/personal/sadeev_...",
-            help="Copy the URL from your browser when inside the shared folder",
+            placeholder="https://...sharepoint.com/personal/...  — open the folder in OneDrive and copy the address bar URL",
+            help="Open the folder in OneDrive, copy the full URL from the address bar and paste here. Works for any folder shared with you.",
         )
         if onedrive_url_input.strip():
             st.session_state["_od_url"] = onedrive_url_input.strip()
-            st.success("✅ Folder URL saved — upload will go directly to this folder.")
+            st.success("✅ Folder URL saved.")
         elif st.session_state.get("_od_url"):
-            st.success("✅ Folder URL already saved.")
-        else:
-            st.warning("⚠️ Paste the folder URL above to enable uploads to the shared folder.")
+            st.success(f"✅ Folder URL saved from previous session.")
 
-        onedrive_folder = st.session_state.get("_od_folder", "NotebookLM Overview Videos for SLC")
-        st.session_state["_od_folder"] = onedrive_folder
+        if not onedrive_folder and not st.session_state.get("_od_url"):
+            st.info("ℹ️ Enter a folder name above, or paste a folder URL for shared folders.")
 
         # ── Test connection button ─────────────────────────────────
         if st.button("🔍 Test Folder Connection", type="secondary"):
@@ -931,9 +927,8 @@ if st.session_state.get("video_data"):
     # ── OneDrive upload ───────────────────────────────────────────────
     current_token = _get_access_token()
     # Use session_state folder, fall back to default so it always shows
-    _od_folder = (st.session_state.get("_od_folder")
-                  or "NotebookLM Overview Videos for SLC")
-    if current_token:
+    _od_folder = st.session_state.get("_od_folder", "")
+    if current_token and (_od_folder or st.session_state.get('_od_url')):
         st.markdown("---")
         st.markdown('<div style="margin:8px 0"><span class="sn">☁</span>'
             '<span class="st">Save to OneDrive</span></div>', unsafe_allow_html=True)

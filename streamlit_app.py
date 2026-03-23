@@ -33,7 +33,8 @@ INTRO_TPL = BASE_DIR / "assets" / "intro_template.mp4"
 SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 
 # Token cache persisted on disk so re-auth is not needed every run
-TOKEN_CACHE_FILE = BASE_DIR / "assets" / "ms_token_cache.json"
+# /tmp is writable on Streamlit Cloud; BASE_DIR/assets is read-only
+TOKEN_CACHE_FILE = Path("/tmp/ms_token_cache.json")
 
 # ── Watermark / badge cover ───────────────────────────────────────────────
 WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1655, 960, 240, 72
@@ -375,15 +376,32 @@ def preview_frame(course, unit_num, unit_title):
 # ──────────────────── ONEDRIVE OAUTH2 (DEVICE CODE FLOW) ────────────────
 def _get_token_cache():
     cache = msal.SerializableTokenCache()
+    # Try /tmp file first, then session_state backup
     if TOKEN_CACHE_FILE.exists():
-        cache.deserialize(TOKEN_CACHE_FILE.read_text())
+        try:
+            cache.deserialize(TOKEN_CACHE_FILE.read_text())
+            return cache
+        except Exception:
+            pass
+    if st.session_state.get("_ms_token_cache"):
+        try:
+            cache.deserialize(st.session_state["_ms_token_cache"])
+        except Exception:
+            pass
     return cache
 
 
 def _save_token_cache(cache):
     if cache.has_state_changed:
-        TOKEN_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        TOKEN_CACHE_FILE.write_text(cache.serialize())
+        serialized = cache.serialize()
+        # Save to /tmp (persists across reruns in same session)
+        try:
+            TOKEN_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            TOKEN_CACHE_FILE.write_text(serialized)
+        except Exception:
+            pass
+        # Also save to session_state (backup)
+        st.session_state["_ms_token_cache"] = serialized
 
 
 def _get_msal_app(cache=None):

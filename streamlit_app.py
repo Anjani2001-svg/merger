@@ -436,98 +436,82 @@ def _complete_device_flow():
 
 def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, status_cb=None, **kwargs):
     """
-    Upload video to OneDrive folder. Searches personal drive then shared items.
-    Returns (True, web_url) or (False, error_message).
+    Upload video to OneDrive.
+    Priority: 1) URL resolution  2) Personal search  3) Error (no auto-create)
     """
     h = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
     def _cb(s):
         if status_cb: status_cb(s)
 
-    # ── 1. Search personal OneDrive ───────────────────────────────────
-    _cb("🔍 Searching personal OneDrive…")
-    r = requests.get(
-        f"https://graph.microsoft.com/v1.0/me/drive/root/search"
-        f"(q='{folder_name}')?$select=id,name,webUrl,folder,parentReference",
-        headers=h, timeout=20)
-
-    folder_id = None
+    folder_id    = None
     drive_prefix = "me/drive"
+    folder_url   = kwargs.get("folder_url", "").strip()
 
-    if r.status_code == 200:
-        hits = [i for i in r.json().get("value", [])
-                if folder_name.lower() in i.get("name","").lower()]
-        if hits:
-            item = hits[0]
-            folder_id    = item["id"]
-            drive_id_ref = item.get("parentReference", {}).get("driveId", "")
-            drive_prefix = f"drives/{drive_id_ref}" if drive_id_ref else "me/drive"
-            _cb(f"✅ Found in personal OneDrive: '{item['name']}'")
-
-    # ── 1b. Resolve from pasted folder URL (most reliable for shared folders) ─
-    folder_url = kwargs.get("folder_url", "").strip()
-    if not folder_id and folder_url:
+    # ── 1. URL resolution (most reliable — works for any shared folder) ──
+    if folder_url:
         _cb("🔗 Resolving folder from URL…")
         try:
             import base64 as _b64
-            b64 = _b64.urlsafe_b64encode(folder_url.encode()).rstrip(b"=").decode()
-            encoded = "u!" + b64
+            b64     = _b64.urlsafe_b64encode(folder_url.encode()).rstrip(b"=").decode()
             share_r = requests.get(
-                f"https://graph.microsoft.com/v1.0/shares/{encoded}/root"
+                f"https://graph.microsoft.com/v1.0/shares/u!{b64}/root"
                 "?$select=id,name,webUrl,parentReference",
                 headers=h, timeout=20)
+            _cb(f"   Share resolve → HTTP {share_r.status_code}")
             if share_r.status_code == 200:
                 item         = share_r.json()
                 folder_id    = item["id"]
                 drv          = item.get("parentReference", {}).get("driveId", "")
                 drive_prefix = f"drives/{drv}" if drv else "me/drive"
-                _cb(f"✅ Resolved from URL: '{item.get('name','?')}'")
+                _cb(f"✅ Folder resolved from URL: '{item.get('name','?')}'")
             else:
-                _cb(f"⚠️ URL resolve failed (HTTP {share_r.status_code}) — trying search…")
+                _cb(f"⚠️ URL resolve failed ({share_r.status_code}): {share_r.text[:100]}")
         except Exception as ex:
-            _cb(f"⚠️ URL parse error: {ex} — trying search…")
+            _cb(f"⚠️ URL error: {ex}")
 
-    # ── 2. Search shared items ────────────────────────────────────────
+    # ── 2. Search personal OneDrive by name ──────────────────────────
+    if not folder_id:
+        _cb("🔍 Searching personal OneDrive…")
+        r = requests.get(
+            "https://graph.microsoft.com/v1.0/me/drive/root/search"
+            f"(q='{folder_name}')?$select=id,name,webUrl,folder,parentReference",
+            headers=h, timeout=20)
+        if r.status_code == 200:
+            hits = [i for i in r.json().get("value", [])
+                    if folder_name.lower() in i.get("name","").lower()]
+            if hits:
+                item         = hits[0]
+                folder_id    = item["id"]
+                drv          = item.get("parentReference", {}).get("driveId", "")
+                drive_prefix = f"drives/{drv}" if drv else "me/drive"
+                _cb(f"✅ Found in personal OneDrive: '{item['name']}'")
+
+    # ── 3. Search sharedWithMe ────────────────────────────────────────
     if not folder_id:
         _cb("🔍 Searching shared items…")
-        all_items = []
-        next_url  = ("https://graph.microsoft.com/v1.0/me/drive/sharedWithMe"
-                     "?$select=id,name,webUrl,folder,remoteItem&$top=100")
-        while next_url:
+        next_url = ("https://graph.microsoft.com/v1.0/me/drive/sharedWithMe"
+                    "?$select=id,name,folder,remoteItem&$top=100")
+        while next_url and not folder_id:
             rs = requests.get(next_url, headers=h, timeout=20)
             if rs.status_code != 200: break
-            all_items.extend(rs.json().get("value", []))
+            for item in rs.json().get("value", []):
+                if folder_name.lower() in item.get("name", "").lower():
+                    remote       = item.get("remoteItem", {})
+                    folder_id    = remote.get("id") or item.get("id", "")
+                    drv          = (remote.get("parentReference", {}).get("driveId", "")
+                                    or item.get("parentReference", {}).get("driveId", ""))
+                    drive_prefix = f"drives/{drv}" if drv else "me/drive"
+                    _cb(f"✅ Found in shared items: '{item['name']}'")
+                    break
             next_url = rs.json().get("@odata.nextLink")
 
-        for item in all_items:
-            if folder_name.lower() in item.get("name", "").lower():
-                remote       = item.get("remoteItem", {})
-                # Use remote item IDs for shared folders
-                remote_id    = remote.get("id", "")
-                remote_drive = (remote.get("parentReference", {}).get("driveId", "")
-                                or remote.get("sharepointIds", {}).get("siteId", ""))
-                folder_id    = remote_id or item.get("id", "")
-                drv          = (remote_drive
-                                or item.get("parentReference", {}).get("driveId", ""))
-                drive_prefix = f"drives/{drv}" if drv else "me/drive"
-                _cb(f"✅ Found in shared items: '{item['name']}' (drive: {drv[:20]}…)")
-                break
-
-    # ── 3. Create folder in personal drive if still not found ─────────
+    # ── 4. Give up — do NOT auto-create ──────────────────────────────
     if not folder_id:
-        _cb(f"📁 Not found — creating '{folder_name}' in your OneDrive…")
-        cr = requests.post(
-            "https://graph.microsoft.com/v1.0/me/drive/root/children",
-            headers=h,
-            json={"name": folder_name, "folder": {},
-                  "@microsoft.graph.conflictBehavior": "rename"},
-            timeout=20)
-        if cr.status_code in (200, 201):
-            folder_id    = cr.json()["id"]
-            drive_prefix = "me/drive"
-            _cb(f"✅ Created folder '{folder_name}' in your OneDrive")
-        else:
-            return False, f"Could not find or create folder (HTTP {cr.status_code}): {cr.text[:200]}"
+        return False, (
+            f"❌ Folder '{folder_name}' not found.\n\n"
+            f"Please paste the folder URL in the **OneDrive folder URL** field above. "
+            f"Open the folder in your browser and copy the address bar URL."
+        )
 
     # ── 4. Create upload session ──────────────────────────────────────
     _cb("⬆️ Creating upload session…")

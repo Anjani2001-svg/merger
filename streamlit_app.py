@@ -685,11 +685,12 @@ st.markdown("---")
 
 
 # ── 2c  ONEDRIVE — auto-connect, fixed folder ────────────────────────────
-# Sign in once with the department account — no UI needed after that.
 if ONEDRIVE_AVAILABLE:
     _token = _get_access_token()
-    if not _token:
-        # First run — show one-time device-code sign-in
+    if _token:
+        st.markdown('<div><span class="sn">☁</span><span class="st">OneDrive</span></div>', unsafe_allow_html=True)
+        st.success("✅ Connected to OneDrive — videos will upload automatically after merging.")
+    else:
         st.markdown('<div><span class="sn">☁</span><span class="st">OneDrive — One-time Setup</span></div>', unsafe_allow_html=True)
         st.markdown(
             '<p style="font-size:13px;color:rgba(255,255,255,.7);margin-bottom:8px">'
@@ -705,14 +706,13 @@ if ONEDRIVE_AVAILABLE:
             flow = st.session_state["ms_flow"]
             st.markdown(f"""
             <div class="auth-box">
-            <strong>Step 1</strong> — Open this link in your browser:<br>
+            <strong>Step 1</strong> — Open this link:<br>
             <a href="{flow['verification_uri']}" target="_blank" style="color:#60ccbe;font-size:15px">
             {flow['verification_uri']}</a><br><br>
             <strong>Step 2</strong> — Enter this code: &nbsp;
             <code style="background:#1a3a5c;padding:4px 12px;border-radius:6px;font-size:18px;
                           letter-spacing:3px;color:#60ccbe">{flow['user_code']}</code><br><br>
-            <strong>Step 3</strong> — Sign in with the <strong>department</strong> Microsoft account,
-            then click below.
+            <strong>Step 3</strong> — Sign in with the department account, then click below.
             </div>""", unsafe_allow_html=True)
             if st.button("✅ I've signed in — complete connection"):
                 with st.spinner("Completing sign-in…"):
@@ -722,7 +722,6 @@ if ONEDRIVE_AVAILABLE:
                     st.rerun()
                 else:
                     st.error(f"Sign-in failed: {result}")
-        st.markdown("---")
 
 st.markdown("---")
 

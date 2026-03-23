@@ -396,14 +396,18 @@ def _get_msal_app(cache=None):
 
 def _get_access_token():
     """Return a valid access token or None. Tries cache first."""
-    cache = _get_token_cache()
-    app   = _get_msal_app(cache)
-    accounts = app.get_accounts()
-    if accounts:
-        result = app.acquire_token_silent(MS_SCOPES, account=accounts[0])
-        if result and "access_token" in result:
-            _save_token_cache(cache)
-            return result["access_token"]
+    try:
+        cache = _get_token_cache()
+        app   = _get_msal_app(cache)
+        accounts = app.get_accounts()
+        if accounts:
+            result = app.acquire_token_silent(MS_SCOPES, account=accounts[0])
+            if result and "access_token" in result:
+                _save_token_cache(cache)
+                return result["access_token"]
+    except Exception:
+        # Corrupt/stale cache — clear it
+        TOKEN_CACHE_FILE.unlink(missing_ok=True)
     return None
 
 
@@ -690,6 +694,11 @@ if ONEDRIVE_AVAILABLE:
     if _token:
         st.markdown('<div><span class="sn">☁</span><span class="st">OneDrive</span></div>', unsafe_allow_html=True)
         st.success("✅ Connected to OneDrive — videos will upload automatically after merging.")
+        if st.button("🔄 Switch account / Re-connect", type="secondary", key="od_reset"):
+            TOKEN_CACHE_FILE.unlink(missing_ok=True)
+            st.session_state.pop("ms_flow", None)
+            st.session_state.pop("ms_cache", None)
+            st.rerun()
     else:
         st.markdown('<div><span class="sn">☁</span><span class="st">OneDrive — One-time Setup</span></div>', unsafe_allow_html=True)
         st.markdown(

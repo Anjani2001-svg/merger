@@ -26,7 +26,7 @@ except ImportError:
 # ── Embedded SLC logo (base64) — written to assets/ on startup ───────────
 _SLC_LOGO_B64 = "iVBORw0KGgoAAAANSUhEUgAAAHcAAABNCAYAAACc2PtBAAAtpElEQVR4nO29WY8kyZXv9ztm5mvsuWctXc1ukk1OX1KjucQVpAcBepAAfWJ9AAkC9HAx94ozHK69VFdlVVbusftiZnpwN0/PrC2bPcTVDHmAzIjwcHeLsGNn/x8LqWpHn4QPvwbAK7wAqNvz/DvO618iqvfKIR4Qh/LgpHded/67jzefCVT/ADT3e+e4vVF7z5VX773m3wupj5/yDpIPM/L7DPs+xvbJ37lG4e9d9zd6N5kfdvktkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf563HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N225GI69/1F693yburdpzIBT7UcKj38F9F61LCIopbDW4r3HmPunhtnzjUoW6Q5ZB0p1b+Osw3sP4tAIiKDeMcHNOc0bzrnmM4jc+k9BYAVwYD0oJYjohomOTpJV66077xsZF3WrmZsTmw/X+679zyHysBXge/fw3nd/WuvuHOfcnfvff33/Pvc/g3PurXtaaz/62d7LXP+eL9697xzi2unSgDQDWwe1bx5FwAiI0Z0sN3ZS4XrJi05t9iZUadUJmHOuMQu+Ybj4ZiGJE+raYoxGBLQCUNR1DebdsTSAV4JpNUj4nn3qMzYw6/579x/DOWGurLV3mHGfWe+6tj/n/festW8tvodQZ3Pv29T+BxKR21XvQUnggwfvwAJaN6pQNbyuWiG0veuwHutqrBdKa3GtdDXMdR0zxUMUGYwotFJorWimSeF9cy8BlAaFbt333pdSpj3mERRahPAN7ltouacp7kvsx1735+p9798Xjj7T+9e8S4hE5L3nf4zE1mXz4d7B3DuqJUyq3Gpgh8f6ZtoqD6WDTeV9aR3rbUntLGVZsq1KyrKkqipwNZV3FNZhBbQ0dxLfPBffMDlJEowIkVEkJiKOY5LYEEURsRJi0TLKcxItjVbwNJyTZvH5vnSo8Glpv6tv7H1vkoLqCwz+2ATel77vM+lwV1ofMt79xfO91PJ9Ce7UkQjO3bUThYWtglWFX6xW3Ky2XC3X3Ky23GwKVmXNxc2cwjq2Zclmu6UoCsqypLQ11lskVnhxBEuopDGoWjziHbExGCXEkSaLE9IsIUtS4jgmV/BoMvCzNCPPMsbZgJ3hiGGaSaIVkSi8dyjaSQseevPF3jlZSqk7NrOz+e+QpnBdOPf+OX2VfF/lhnP7ave+ynbOveXj9Md7KD04ztVaIQLr9ZYXl9f+N2dzzjc1pxdXnF5ccnGzYL4pWZeWwoFO08YIKoPoICUJXsU4VWNd1er3lgmtj62bb4LxoJ1DFQ5VlrBcgKtxzqFdSVpuGCeaPE6Y5kOOd3Y5GM/8o709nh09YjwYSiwQ3/p5tw5UO0Z/Yvt/D5Gm970fJLoZ7pb5H7tXnwID7ztS30czQE8tdzfmdmVJq4Nd6/06B1999ZX/P//pj/wfv3vFlQwaSURwKsKLwivBKkVlLSiPVoKIR5THe4s4j6cmThRObGNTEEQ1EiuqMaCRFnAW52uk9bSNNCtfqRrsmkQDZYmpHJkXYic8muzyxbNn/G//8/8iqWgy0Y2/h7u36hVVVVFVFSJCHMedtPS1VF3X3SRDGF/dYVi4j/eeKIqIogjvfXcsjuPufmVZdg5SiES01nfOsbYxZyKCMQZjDN576rrujn1/b9mrbpmHgZyjXfHCqrb84fSc/+s3v+dC7zNXKco3DPLG4LXBeY/FExmN9xaPw9McM1qhjSBKsL5qbaVtlpTziIDygheHtQ5wiHIgHiWCw7UTbdGxxiuHFo3JU5TXFIsVb1ZzsjdvsD3fvNEIjaoOC9d7T1mWbDYbRATnHGmaopTqVHJVVZ05CQwxxqC1Jk3TTqLKsmS1WuG9ZzAYEEURy+Wy8TFoJDFJEqqqYr1eUxQF1lofNESSJJLnOUmSdAvm6urKp2kqeZ7jnGOz2VAUBUmSMB6PP8rYZvkGvtLUaENSwVY1eFDOoaWxyBs0//j6got8zDbPMXnMKNfsDjQDscwSjXYFcb0hrZZ8updzkAlRvSIRi3I1sbaIrdC+eT6MYKAsSb0lLtfkdcFEefYGMZRLXLEgVhXabTHeMjCKRATtHUaBUgbnoEYgitBphkpituutj0WjAN069SIKa29j6cvLS39+fu6DFAQpNsbgnOP169f+4uLCiwjWWl8UhT85OemOhUWgtebs7MyfnZ35OI4ByPOcm5sbv1gsvDGmWzTOOcqy9G/evOHNmzddqNN3lLz3vHr1ij/96U8+ihpncrvd8s033/jlcum32+0DmdtlePrZox7524etc34pEVudopOULI3ZmQzJIgFf4CnI0witavIIHk3HHEyGDE3DDO8tzlki5UhxfDLbIVegbEW9XSO2hLogVp7IWxKBRHkMrSvsSmpb4OoSJR5lPbhb+6hMhE5TsnxIpNtIttVeIc5WEuyXYrVasVgsUEqR5zlRFHVSvFqtuLi4wBjDYDBgb29PptOpJEnC6ekp6/X6Lc86qO++Ku+/H0URg8GA4XAoxhjiOGY4HMp4PO40QVDXw+EQpRRlWbJerztJj6JIkiR5IHPfQ3eMt2/Uc1mW1G2oknk4nu4wHY7ZlAU6MbhIKJTFx4qiKsjSmEwpbFngbIXSUItFa+HHB4fMRFEtljjnsFqQLKZSsCm2lEWBt7bLQIgIXiu8cXjj0XgipUi0wnhBeUWkY/JsyHA4bmwiYHF30o2qtTwiMJlMKIqCly9f+u12izGmY8z19bVfr9cMh0MJdnQwGDAajWQ+n7Pdbt/yfIOtDjYSIEhteJ6mKVmWdYxMkoQsy+7Md13Xd8zGarWirutm/uva9522P4u5PS43/PWw3W6bVKSAqioGWjMbDcnTmDjS2KrAuxqjhLoq0N5RbTe4skCJwxgNOFKj+OLpExanp6wWc5QRVBLhIo2KFZt6S1EVjbcJOBTeNNkRr0Arh/KeWGkSbYhUhFERg2zIaDDAGNOzd7ZVPq2nrDqnmaOjI3n06BFXV1ecnJx0kxY8XOdcd59+XBucnz5DQigVzgmq1hgj4V53p/XWKw8M7Ydfzjm01uR5Tp7nDAYDaReKvC88+zOYe/t0WxZAuxq9Y351SR5H/PjJJ+zGKXpTMBAhBVKjiY3G4Em0IjG6VbeOSZYxzCLOzl8SJwZRCmcUW1dTG4/EGmcUPtW4JKbSbfIfh7gSVVck3qOtRddChGKSj9jf2WMwGFCWJVc3V9TQet/utnrUvmylgE8++UT29vZYLpddDl0pxXQ6FRHh9PTU9yVpPp/76XRKXzUGCQRYLhtNFOxiP94NDO7b2D6zgxeutcZaSxzHpGnKYDAgjmOiKOrGewh9OM4NS7z9HME9j6IIdMx6veT6+pK92ZhPDo9QHt6sl1hb4+q6CW28I4oMFocXR6SEcZ41qV/vMLFmU22QLEYU1LbGGKHyNaIVTnus92hxGC3EKCKJiZzH1IJSwiAZMJtMmY7G2Krk5vqKV69e8ZNHx8RKt8xV4C2guxT21dUVSZIwaKVda91JTJIk7O/vB4beUcGHh4d37J7WmuFwKEVR+OVy6b33UlVVF8aE6/oJk35asZ8Icc51nrlSbZ68nXutNXVd+7Is5X5K8nsx191LSIpA5SzKaHRqqGoFWnh1foqvNxxO9vjR8RHb599yU21APM7VlLbEUlM7j/IgeLyryZKYwWDA3NU4dJMnjjTVZov4JjRSSjUlRFejjCZSmlhrUi/ERaOWs3TEdDpllGXYastyfkMxv+KVs1j/SxDTpBuhzaECutE+IsJyufRJkrCzsyPQeMxJkuCc4+nTp7JcLimKwrfqWHZ3dyXLss6uBvU6HA4BpK5rb60N8a6kadoxt18xGo1GHRPruu4YHbTE7u6uVFXlrbUY06Rd9/b2yLJMHprM+KDkeu+RNm/n5TYPqrWmrmpMHFNu11xcX6BKy/HxMTuzCcvtnMFwQJwYNL5NRniMjrFlyWq1JEkyBmnGolwyjFPWVYGgUM4SaYWOGoejxjVJFGdR4hEvCJpEpQyihNl0xnQ6bpygqytubi5gs+G6to0aVG18K7RF3kZ6FcJoNMI5JyF8qeuaJEk6SUqSBGMMNzc3MhgMgCbEqeuavh211pIkCVEUsV6vJThV9yU3hEIAOzs7UpYlURR194NGqqMoYjabsV6vJcx3nufEcSzfpxz5FnM7xENI5rSF19V6y818TjbIUdslkfYkscJ5w3o55wpBXRtQlijSeFtAZUkjg91sSPMh3lnAcXVzzYuTl/zqV7/i//l//zMXqxtm4yGbYkseRVRVRRQ3H60sC6JYE2uDcpBEKapy7Ix32BtPGIwHeFWz2CxYLa+oqg3jLMJV9W1WSdoqkbqNcREhy7J3lvNCpqmqKqIoYn9//06WKkiZUorNZkOSJF0IM5lMunsERoRcc/jre9XBzIWxQvZJa814PA6q+I7XHcb6GH3QMneM7kluMwmeUZYxyjKGg4wkz3DKsy43rKsNDov1Dm2E8XDAME2JPMQiaIF1seW//OafuNmuOT4+Zm8ywVQlUWVJESIR8I6y2GAUGDzGOTJlSJVhb7TL7nRGnuYkkaYuSy7Pz9hsF4wGKZPpuIs3G5xzwNz08r695++qyQYG9+1kX3UGLzrLsk6VxnHc2czA1P5igFu/pV8cCGM1H9F1YVKQ8mACwqJ4CGPhQ8V6uRvrOtfAUb0IWikiY0i1xpFAnFAVBYtyzcbXWAORh01RgFZkeYKlcQzQmq2C51cX8MowzJokgVGeuBC0jsiyjPl6ha1KEh1hPGTKMEpyRsmI49k+k2xAZDRFueTN2QnL+SVZHjPIU6hrsiRFfJt+dLfMa4oGjXqs64rtdstkMrnj1ARPOlA/71zXNXVdk6ZpJ1Faa5bLZaeai6K4I+kh6xTi2WB/N5tN5yiFa0PaE+gYvl6vieOYqqo6qX6Iav4gzKZjNHcRCap11Utf4l2FE49VULmSCpBYUVn4+vV3SFGyLgvWvsLXJaIMOjKYQcSLqzdkC2GQRIit2VYFrqpIshS8JdGGDE2uE6bZkN3JDpN8ymw0wVc12+2S0/NXXF9fkmUpeZ42E1A4nuw/Jo7TTjV5D6IaxKSzFpRiOV9yfn7ukyTp7O5ms2E+nxNFEWVZ4pzzURSJUorJZEJd15yfn/u9vT3JsqxdJDXr9ZrNZsPu7m6XGDk6OpI2n+zruubg4KC7ZrPZsFwusdZ6Y4wsFgsfx7GMx2OstZydnfmdnR0JC6IsSxaLRRcaPYQeDJDrnAElKKOpqdtkQ9mUwY1uSnwaJDL4xHC6uOZ0dcNKVVRiqb1rzo2kCXGMpVSey+2a15slc2/Z+JrldoPdlox1xo7OeTzY5dneIx7tHrC3M8OLY7294dWb77i4PiPLE4bDIWVRU5Y10/GUJ8dPSEzSZaOab6ta6FRjCzebjb+8vOyqNwDX19d+tVp5pRRZlpHnuaxWK//111/7kCl68eIFf/jDH3xRFCjVVJfKsvRBJTvneP78+Z2a7GKx4LvvvvPh+eXlpW/TnhJFEavVitevX/ubmxtEhJcvX/KHP/zBLxYLsizDWst8Pvffp6b7oHqu92C966oYSimUMXhr8W3qz6gGZK69xfqaKEuxrkQbBU6ROIcY3WCssGALTKwxJqKqAPFoY9DeY5yQeGFnOGY3HXK0t89sNkFHhspZrm/Omd+cs9xek+UReZ5RbgqsdRzM9jncf8QgH90iM5s4iNsuBYdIk7AP4Uiwg5eXl+R5TpZlndNTlqUsFgt/fX3tx+OxaK25vr7md7/7nf/Zz34mWZZxfn5OkiSd07RarUjTFBEhTdOwQDg4OODq6srXdc3h4WGXTQtjXF5e+jRNxTnHfD7n+fPn/tmzZxLUfwilHsLgDzI3oBga3JLHyW0mxbRpPNEe7zw1nkg0Foc4DbXFiMFEHuqmaCBKYb3DeU9qFFo8tq7RYlCJwVuHVk126+nOAbuDMfvDCZPBkMhoNsWG88sz3lycUNsNUSzEsWlsnLXs7OxxeHBMng4py5qyciTRbXJAqyasU0Y3IV5LfVt7eXnJcDjsSnQiwng8xhjDcrkkTVN2dnYAeP78OS9evPCPHj2SbozWHva94ziOGY1GLJdLttst8/mcNE07G9sWEMJCoigKBoMBeZ5zfX3Nn/70J//48WO5H1s/iLn+Heh96eGBnTQw0uCQaByVrVEiKAXWC8pbHI4IhVaeWjVJIYmkjZU1XjUrJYkNZbFmYCJcXYOzJCYijWPG+ZBhlPL502ekaHaHY8R7inLFfHHNyfkJN4tzpuMMY5Kmzrmt2Zvtsb97QJ4OUB5W6xWr7YbIDFDSJGXEeZSWjrH9lGCQ3JCG7DM9ZIta++q11jx69Eg2m41/8eIFzjkfarHBkQohTZC0NE3FGOO11vTVeRzHnWdd13X3WinF8fGxJEniX7x4watXr3yWZcxmM8qyfAfU+B3MfatLA/CiGkyTB2sbQPe6rtHGkNmK3HgMjVPlm0owCoXyDpzFeovFkuYR22pLrRqca1kXOO9BDKI9tS/IlUK7iqEIh+MZeztH7Ixm7AxmiHVUm4Kq3vLq7AXfvP6WKnbkO2MSE7GZr9Ha8MnxU472jxjmAyhLFvMlf/rmO2Ll/X/65T+IxyOiUVoBNVVZok18J3kfwotPP/2Uk5MTdnZ2GI/HrNdrttstWZbx6NEjKcvSB2/4pz/9qZycnPiTkxPiOObZs2fdYrnv4V5fX/vj42Mmkwmz2YyLiwuWy2VXeF+v1xhjmEwmnUR77zk4OBDAv3z5ks1mw2w2YzgcvlWIeDdz25YMFQDdoSm5c0LapH2LsNB4NI4Ij7QICy8e7QP422NxOKkoqgplhCROmhKZBq0EV22JBZLaM9DC0eyAo8kOO6MZk9EuSZpjK4uJDIvlipevnvPm6jVeW/LhAKM1m3VNmozY3dnhaP+ALEmxxZbFxQXX5+eIt9ysrnDUgMa0OGZnPVGcst2WXax5cXHhASaTiezt7UlZlv7y8tKvVqsgXTIajQKzxFrry7JkMplwcHAg1lrvnCN43FVVkec5z58/91EUdYx48uRJUPOy2Wx8KCvmeS7eez+ZTBiNRhLMgbWWPM/Z3d2Voij8er3utMxD6EEOlQhNZwG+tbcKT1OeQlm8labsKk22w3tBSZt6VL5J/1mHqh2RNsQSMdQRR+MRe9mEJ3vH7A2mDWw1SVnZgkJqXl+e8t133zBfXSHakiQx4izFpuRw8pg8yjnY32M8HnJzfc7F6SsoS4ajnGwUU5YBH+aAJjPknUCrZkejkezu7vqQ/tNas7e3h7VWqqryIQYNXvNgMLgThwIMBgMODw+lLMuuMqS15vPPP28m2Bip69qPx2OZzWaICNPpFECqqvJFURBFUec1p2nKYrFgNpsRRRFKKQaDAU+ePJF2ITyIsXeY6/soQW4xyrev7wLEtICIwyE43ao371sUY9NykBpNXVdUZUFOw/TUK3YHQ46GQz47eswkGjEdTchMihcotWV1ecZvv/sjl4sL5ssbsjQmNjGutgyilJ3pmIOdY7IkJc8T1us5p6cnLK7POZzucnx4wOZ6g3EtFKaX7dGtrQr52yiKBLiTRNjd3Q0M7gBvIcvUMriLi51znXcdEiF5nnPPw5U+aiOOY/b39/Hey3w+R2sd7tuNEcexBPsLTSYsy7JuzO/FXGjTySH12mNwqKiIB6MVRgmiFZV4lBdUONd7xAnaCzFA7ZDCElcwihJG+ZjD8Yzj3T0OR0P2Z3v4uslKFbbmbH7Bq+uX/Oabf+Fqe4OKNRKBaIW3ikxnHE+O2ZntkuVTnDiW83NevX7OYn7OznjMZNpUW66urvjRo6dNKhCIVIufUlDXDq0bj3YymXRpvTBpgaGhKB+cpPsFhTDRwUMOYVWovQa7GdKZoQzYL/TPZrOuSN8r8N8pCYZxwjXfy1t+H/kemNv7xvNTug2DVIu60oGpHiWgfGuXlaIqtoy0YW885XA05pPdQx7tHTBKUzQWMVFTkCiWvL4+5+uXX3NydcLLixcMpjlGazQRWTxkN5+xM5iwP9kliiKcclxen3L25jmr5SV5FjOZjvDec3Z2gTERn376GcbEeOtA0UMwqju52uC53i+Ch9f3scd9T7Ufc4bzgxccxuvniO8X6oNnHNKd92PZPkOh+Q4P8ZQfxFxN2/XoPYpb7LCoBk+sVNN47bAdYwWo6wqpKgZpwtPdPb548ilPd/cZqojNZoWNDVebG06uLnh+8Yrvzl7x5uYcKwWDnTG+tuTRgJ3BjIPJAbN8yiDOiU1EVW94cfItlzevcbZkZ3dEmiRURdmCBAxPnz7jaPeRaEDMXQkIEhGSGNZattttJ619iQlFgaqquoR+mPiQRgy54cDIoiio67pT5yLSwWhCeBQKAP1yY3gMqj7glEOxIRQmHqyWhTs9VGEKmrg0gH4B75t+HiXS1FVboHlTaWkyPrQ2FxxJEiGVZr1ZMl8tMJFGx5rNesO63vLrP/2ei+2Cs/kFLy9PWRQbVKJJo5jMpKRpzJP9R+yNdhnEKUnUFL2vVzecXbzg9PxrVOSYTabkWcZmuaLY1OwN9zk8OGJ3utvUgitIoqaBrAGL2xaF2TB3vV538NKQvw1JisC8NsnvtdbSoi46x2c+n/vhcNgV5QMDT05O/OPHjyUk/4uiIKQSA6O01k2LTVl2Vaztduu11hKk3xjDfD6nLEs/mUzk/uL7IHPhNr7tGNt28CjT8M5KoyaiSKPwaFGNxNKoZe08eMHSdiYAVV1BpKi949X8nP/6zb9wtb6iWm54efqSFzennN1c4CNhW2/RRrMzGDOIBjzZf8wwypvMlDaYSOFwvDo/4fTsNdatiVJhOpmgxHD6+gxXeZ4cPuXZkx8xzkbEJkahiCOoak+qBecFpQx1XVKWNWdnZ74oCp49eyZBtb5+/dqvVisxxnBycuKn06mkacp4PJblcumfP3/OwcEBh4eHEkURX331FV9++WUrALc566+//rrzmEOC4uTkxA+HQz799FMJmuDm5obr62v/5MkTaeu5EkqKk8mE7XbL9fW1t9ays7PT5a4fgqP6oFp2zjf4YMC7Gu9c21TdItfb3knlHRbXbB8kzV9RFRijEFFclUt+/c3v+OrlN/iqZrVaUmuhxKEs7I6njLMRk8GYg/Eh+5N9tFPkeUpZrVlu55zfnPHtq2+pfMF0MiTTA9brDavlnFinPDp+zNH+EWmSk0Yxb07fYLz2zw6PJTJNQsY1xSCUMlhbcHZ2xqNHjzp114ZCEkDmZVkyGAwYDAbBoRIR8cvlkv39/U7d3q+3ioj4hm699LZID7elvLquefXqlW9RFl2qMpiKhgfuDnA95K8flMS4f8Df8ZY9oqQJX73H2gqvdbsHVMPE0B0ohOcO8OhYgzQ550pZNlXNot7incP7mmk2QRWaw+mE3dGI49kBu+MdsMIgGzaZLQpOr094dfGSm/U123pNlEZYX1OsYbOo2N055mD/kDTKGQ6mxMbw3Ytvef6Hb3g9esnx//q/kxiD97fd/v0iwRdffHEHk9Riobi+vr5TgK/rugt5VqtV5ywF9dkvoltru9g5aATvPYvFgsViQVVVfnd3V+I4Zr1ec3Bw0GGmAyO3223HyO12y8nJCcYYf3BwIAGh8VHm3t07KpDDe9XGroKWtlnLeby931DVMFZ51zpdHsGRJRFbWzRISA0ojfUWrKBVzMHeIeMo5ZO9PUZxzCgekKcpy/WaslpxfnPB9eaa15cnXF6/IUoMg2ETS9rCEkvG8dEhe7uHjPIRCmG9WXLx+oarszNMJGy2i8YXaCkw19rbLrqQ6LjfBR9sZ3gvvB/HMcvl8g5asa8i+1ip/j0DDioUHtI07cZZrVbd+fP5nBcvXvjBYECWZRJCr+l0Sr+++xD64LYJ/ZuEuC14e7RQ1a6E5lsb7BtG11UDHBdpYDl1XTVdB0qRRDG7owk/f/IpkXXsDEdo77i6uaRWlt9++wfmxZI3N28QARNrkjhGrMYXNTuzPcb5hJ3JDnmedzjl1c0NYmuGg4RkMCBVMZHWOO+atGN02wqZpmnI8d5puAoSs7u7y4sXL3j9+rU/OjqS1pZS1zWz2YwkaVKq4Xg3oW0c28dF9eczTdOAbMQ5x2g04vz8nNlsxmw261R8WFhBmofDIePxuIvBf/CeGCZSeNvY1SxLiKMIty1xLkBQgnpubXDL2NC9532jqkX5trvPoLVgvGK7XuBdRZ7meHFcLS55ef6C8/U1v/n6t8SjhHWxYZwNiFRM7CMGZkSSpRwfHJPFTUZnW6w5Pz/l7NUJSWx4cnTE7njG899/zdGPvsBSIYT9NXSrnptM0cHBATc3N7x8+dL3Vejx8bEcHBzIfD73V1dXVFXlgxRmWcZ0OpWiKLi5ufHW2q5ikyQJeZ7LdrtlvV7z+9//voPNBlXbMty30ihPnz6Vr776yp+envrr6+tugY1Gow6cHjztk5MTn+c5+/v7D+o6+LDkIi2DhCzLJIqMr5erBges7nvZdymKIpxtvGbfprqUEWprWW0Lvnv1Jwaq5tMnn7BarXj15iXn83POVtcUaovzwmAwIFUZo2jIJBszGU4ZTabEcUxd16zWN7w8+YbrmzOmw4z9/R0GgwRjGjv19OnjBsQqgo6axRhq03Ec8/TpUxmNRhRF4UO8GlD+Sik++eQTWS6XvufMSGjRbHPO8tlnn/nRaEQURSRJIkmSMBqN5Be/+IVvobMhd8yzZ88IOWhjjARA/Oeffy7Boy6Kwu/v7zOZTAQaM3B0dMRoNGI8HstDs1PvZG5jgxWIbRupPBohiWMSEUxZESuwkWrqs91mFM2fVQ2ysHYOpxyiaXe9uZV2qyuWtuC3r37HV6+/bkBn1jb3M5rY5xhnGMVjhmrAJ4dPGGdNmjBPM4pqy+X8nG++/T1ltWB3f8x4mJMOms99fvEGYwwH00Nxvt1kTN1txQhZoL29PcqylMCEvlMzGo0IqIhwTZqmnec6Go347LPPJGSvgkoO8JnBYHAnabG/vy9h3LBAqqpiOp12HnJRFBKcuuCJHx4eSlEUZFlGWZadR/0xElvdovzuO1ZBFbkWs39yfur/83/5Nd/OL1mMM7Zx0yZZ12ULmKsoXUXpa2z752xBbSsq25xjsYiviY1FWY8vPbEkpDqFGgYmZWc8JfERe7M9doa7JG3myCvP5eKM1xcveXP5kuEoIs00eWowWhhGQxKfc3ky57//4j/y5Y/+TmKJOg3jrEXpJjnjezvP9Vs9/q3Q97a5d7avDSu8fU8Bs3wox5Oxf311xso7PJayrLC2Aq2aVhEcStN1xgfnq8liWfAOJ47CV0SRYD04V5LFObvTHXbzKXv5lJ3hDomKibTBi2NZzDmfv+H08jU3mwviHGpTY/IhXmrKqqaWGF8pXG3ZGc8wEhGaDeC2N7f//f7/Sg9NMX6I3t8rFOAnWnWwlDRNOT4+5o8Xb3hTrEDFTauIc2083IRMzvm2L8c2PUM0FSVpB3QIdeVBaZJYoWuHdxuELcNByu7OLpGP0EpT1hsu5mecXp9wvb2glgoztqRZhBHBUVGWloSEclOiN8Kj3SN2pjuiaHavQ0I6rfluXhzyw3ZG/IvTxzTJD6oKBTxPWPfWNWpgNpvJJ4+f+K//+BuQLUo3KtF5i5c2/VhWKG8blIa33UYm4ppGMPEeZSJwoLRDG09dbri8OSPXKWkUMx1MWN+suLw55WJxyqqe46MK4mYDFacFHcUU5YbIabIsZXtVErmULz77goFJb+vTd9pImq0Cr66u7iQYwuP9Cs/76IdK/g+VzLbg/0G6U6y/T/ebi0PD06dPnvLHqzO+uXrDttwQDVMK76ht1W21651FeYdutikBLEjd7q3pieOEolhT23Z7Py3UtubNzWuWxYJxPuBmfsm2mGMyhRkovLKoqMETF9s1RjkipUl1ynZRwBaePn7C8f6RSFv00Ioe6sC2NWrpqjF9hn4f5j7UY30fPbRs94PG+NjgwTOUttTlnGM2Hcsvf/wTv/1NwfOLU3ylECNNelJAa8HWvtmpxlsaUE5TORKaylJdF802VSpCFFjn0RoK2VJsVswLj6dCp6ATjfVQO4vxEdZWiEBdVQyiFGrN9ekNj3ee8rMff0mmM3xFo3R0yDm6xlyIQzAdav8+k277oT6sFn+o5H1s8fyr2Nz37RYegvrwKNDGvZCqiE8PjmU+n/tNueGiXOFpgHW1s4jxrbQ2O8Q5f5tz9qopMohtapXKRIBgbUEhjtgo0CWeuuWLUNZNq2MaJ6CEarNlEOdEtcFbKNcls+EeX37+H9gbHYhC3zIVQNrNR5QKIKDbxvIe9b3mj0nmQ8tu76MfKvkPoQ8mMUJMdn8VKzyZ1nz+6CkX82uuv/kDuIooNVS2xFVtJSMg2qVJRXp1W0lK8pjNaoXdNqreK0/lqhbRUbVhlIA2xHGCVhrraoxSpEmKX0EW5VTLEl1E/OIXf8/fffZL0Wjq2mH6EotvIbjS7VXXNTC+R0L/NRyaD9HH7v+xxfODWjgD/OP+l9C6QesbL+yPJ/LLz3/CT44fk5QOtalIlcHWFSpq0BmlLaldhcXiXI2nwitLUZXoWGMSjadEaUsUg9J1o77b8bU2vSR9Ezf7qmSoBqzfbMndkP/hl/8jP//8F6KJgKYFpGk7de1SEhDT/tpCw+J3TU5AQ3yIcQH52O/W689ZyCH3O+n7xwLSIlAoXPQqSnfG+yHq+c9y+RrAmSCu5tHOnvynL/87fv70R6SVxy43RF5wRdWEP/o2I0S7D5W3dVcqVNSIsoiqUVLSOF6WJIlwvmazWVNuN3hn0QgGQdeK9fmKg+Ehv/js7/n80U8k1yMEhXOt1mnv/6GpCZuSBAb1u+DhdqLDrjZhO4RQ9QlVnfu73hRF0d33XbveiAhF0ezWEwoLQVL7mKyQtepnyOq6fnh/7v3fA3ov9d8XqLwlUgaN48l0R9Jf/IPHef7xT79pOhUM1OKa+q14GhiT4JQgDnSLmhRx4C0ijZPU7AHpcVJhEoUyHuUrqCEyCbqOkFJzNDzi509/zheffynjbIKmCau1aiUobFtzb/2GIw2Q7sw/fvxYQvvHZrMhgMtDGjLgouK4wUFnWcbNzQ1RFDWdhWVJnucURXGnNcRay3K5RKTp4O8X6EMOOzBqsViwv7/f1YhDR8NmsyFN027RVVXFZrPpeos+ytyPnvEeEmn2YlRtY/TRaCb/05d/7+PY8Otvfsd5uUCJRWuITYRvQx3jBR0ppA5T3eCxaBnbBL8e5yyCwyBEYjC1IIXHSErmRvzDf/gVz/Y+k2k2QYCqcN3Osu3668Iy9w4G3yzmeO9ZLpd8++23/unTp+Kc4+rqyvebrReLBdZa9vb2ZD6f+9FoJMvl0i8WCz7//HMJjWDL5dJfXFyQ57m0G336NocsoWS33W65uLjwoegQcglXV1c+SRJ5/fq1D5hlYwyLxcJvNhtCeTBsfLK7uysPsflvxbn3Jfi9v5HXTpxud+2KLHyycyjm58qPspT/+zf/yGVlWdmq3cjT4eoKpR0minFhh9ZQLhTVgNxF2m4Gj9Q1SsUkPkYKTVRnfLL/GV88/Rk/ffJTGcZNn02zr4ki+CDWVmgtbRbq9ken+ip6NBpx8uJlV3H59ttv/WAwYDabyWKx8GEBAx1OOezgFqQxbI4SJnq5XLLZbLwxhtVqxZMnTyT01oYwcrlcAnQ7wWmtJWCSq6rp9N9ut340GkmrtkVr7YuioKoqVqsVIuLbHqKHMff7ku51Blpr0WLAOg6yiQx+/gusq/3vX33FH998w2K5gkzQuqkTWmub1s+21isd8r115BCoPRExujbYAqYy4UePfsIvf/wf+fzxjyVtEp0430hrq/XeppCc8rTdfg2t12uyLGO73RLHMXt7eywWC66vr/1sNpP5fO7bxiwZj8cdUsIY0/UGXV5e4r1nvV57ESHPc1arVdcdsN1ufQuZ7cAA3vuu97et3fpQOZpOpyilWCwW3YKpqsorpUjTVLz3PoDoHsIjqWx990Arqd2mWp67fSXQeKI4qrpC6wgtCrtt49LIYKm5Kub88fQb/1+/+y3fXr3g2i7ZqgLrS2qpUTrEwW0ZXTyiXAfToRISa0j9kP1sn58d/R1fPvuSR5MjiWh2Ufd4nItCi1L7O0e2ddZaMQ6tqO05wc0qi5LtetOhGgJOuIWXdntdiDR15YBCnEwmEmxxf3+MYLfX63WHYV6tVhRF4bMsk9lsRlVV3NzcMBwOu27+IOWhPJgkSWfvg+1tF1XzyVtYz0N6hv5s5jpXI0oh3GKt2tHB0IDYxPKqOPf/9O3v+Odvfsvp9RsqX2OjktIUWFWjRZoGMxGU9xgE5QRdGYZ6zGf7P+YXn/+Szw4+k4FkpK2y8bRwH4nuNFI7W+Gdw5gmLOocwXvMVe2y6reJ9IHnoZYa9jiG213cgmfb35gk9MyGNG3fSw4hVtjqtx8WhZAvOGL349s+RqvvNT+EpN+x1qf7oK/+4x161zhNcxF12+JZ43h5fuJ//Ztf883zb7myl1yml9hBjVYKV5V454iIiW2ErjQ/Of4Jnx3/mJ8++Qm7+Z4kXqO8aiyo6netvSeau/+55O7hf1vV27epv9vO++jPZ+77Fk/XodC293NbUVqtVnz11Vf+19/+M/+8/BdWetlIrRakdhhv2B/uczR7wq9+9iv28l2Z5TtE3rQiF5qX2jLev3UO/QD6b8rc/mm1vVU/2+2Wi/WV//3ZH/nq5R85eX2CVk232/HeEc+OPuHxwVOZRbsYNNqrEDHRJrhvx/gbcz9I8r6T7nei3T/2EOZaa3F4jG6D8LpZSNpobooFV8srfz2/wvmaPM+YjqdM84lEpGgv4HSDc27qhLeM9b7btvCvlR6EofpXY+67zHEP+xxOd75J17naEyWmyyRZ30i30O7Uahv7qvrS2jpy1jsiHX/0y/17pgdhqP5SwLD7SHzrmrqwEtXGu0DVoCtFhKhtsxT0bR02qOLmDWpnsdTtxiVvpxb/mughfPvz4QAfuXff1ddaY1TvF7JEOsY1jG5gE9bVeG8xOgZpCvje+e5HG524tmj3162SH0p/MaxHwPEG6qvouq4xyjQZqp54KnW/hunu1NQj0VjXXvM3/n6UHpSA/ouRh7d/uTq810dShCf9c/96VfJD6b/tDAm875er71AAcMD7vfS/0Vv0Z0vuA5zl918g7zkO75dk4FZyeyDkv9F76S+Pr3wPdWlA4b3SeHs4NHj3X/+NuR+jfzXmvjdn+xDF8A4GB/xk/yZNHuNvntRD6f8Dk2QTopas9cIAAAAASUVORK5CYII="
 
-st.set_page_config(page_title="SLC Chapter Wise Video Creator", page_icon="🎬", layout="wide")
+st.set_page_config(page_title="SLC Video Merger", page_icon="🎬", layout="wide")
 
 BASE_DIR  = Path(__file__).parent
 INTRO_TPL = BASE_DIR / "assets" / "intro_template.mp4"
@@ -49,9 +49,10 @@ LOGO_BOTTOM_MARGIN = 53
 # ── OneDrive settings ─────────────────────────────────────────────────────
 # Uses Microsoft's well-known "Microsoft Office" public client ID —
 # no Azure app registration required.
-MS_CLIENT_ID = "076e2c7e-e5e3-4185-9679-056df2037608"
+MS_CLIENT_ID = "772dd850-50bd-4c97-9152-d1b3e78fb737"
 MS_SCOPES    = ["https://graph.microsoft.com/Files.ReadWrite", "https://graph.microsoft.com/User.Read"]
-MS_AUTHORITY = "https://login.microsoftonline.com/537b5a03-4d35-4e9c-9836-e44d62accdcb"
+ONEDRIVE_FOLDER_URL = "https://globaledulinkuk-my.sharepoint.com/:f:/g/personal/content_gamification_imperiallearning_co_uk/IgDpo-qQQhSNS5aOw2lBAFo-ASQb3KWLDkHS9kp6sIHuy0s?e=3Ualc4"
+MS_AUTHORITY = "https://login.microsoftonline.com/globaledulinkuk.onmicrosoft.com"
 
 TEAL, WHITE = (96, 204, 190), (255, 255, 255)
 
@@ -436,98 +437,82 @@ def _complete_device_flow():
 
 def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, status_cb=None, **kwargs):
     """
-    Upload video to OneDrive folder. Searches personal drive then shared items.
-    Returns (True, web_url) or (False, error_message).
+    Upload video to OneDrive.
+    Priority: 1) URL resolution  2) Personal search  3) Error (no auto-create)
     """
     h = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
     def _cb(s):
         if status_cb: status_cb(s)
 
-    # ── 1. Search personal OneDrive ───────────────────────────────────
-    _cb("🔍 Searching personal OneDrive…")
-    r = requests.get(
-        f"https://graph.microsoft.com/v1.0/me/drive/root/search"
-        f"(q='{folder_name}')?$select=id,name,webUrl,folder,parentReference",
-        headers=h, timeout=20)
-
-    folder_id = None
+    folder_id    = None
     drive_prefix = "me/drive"
+    folder_url   = kwargs.get("folder_url", "").strip()
 
-    if r.status_code == 200:
-        hits = [i for i in r.json().get("value", [])
-                if folder_name.lower() in i.get("name","").lower()]
-        if hits:
-            item = hits[0]
-            folder_id    = item["id"]
-            drive_id_ref = item.get("parentReference", {}).get("driveId", "")
-            drive_prefix = f"drives/{drive_id_ref}" if drive_id_ref else "me/drive"
-            _cb(f"✅ Found in personal OneDrive: '{item['name']}'")
-
-    # ── 1b. Resolve from pasted folder URL (most reliable for shared folders) ─
-    folder_url = kwargs.get("folder_url", "").strip()
-    if not folder_id and folder_url:
+    # ── 1. URL resolution (most reliable — works for any shared folder) ──
+    if folder_url:
         _cb("🔗 Resolving folder from URL…")
         try:
             import base64 as _b64
-            b64 = _b64.urlsafe_b64encode(folder_url.encode()).rstrip(b"=").decode()
-            encoded = "u!" + b64
+            b64     = _b64.urlsafe_b64encode(folder_url.encode()).rstrip(b"=").decode()
             share_r = requests.get(
-                f"https://graph.microsoft.com/v1.0/shares/{encoded}/root"
+                f"https://graph.microsoft.com/v1.0/shares/u!{b64}/root"
                 "?$select=id,name,webUrl,parentReference",
                 headers=h, timeout=20)
+            _cb(f"   Share resolve → HTTP {share_r.status_code}")
             if share_r.status_code == 200:
                 item         = share_r.json()
                 folder_id    = item["id"]
                 drv          = item.get("parentReference", {}).get("driveId", "")
                 drive_prefix = f"drives/{drv}" if drv else "me/drive"
-                _cb(f"✅ Resolved from URL: '{item.get('name','?')}'")
+                _cb(f"✅ Folder resolved from URL: '{item.get('name','?')}'")
             else:
-                _cb(f"⚠️ URL resolve failed (HTTP {share_r.status_code}) — trying search…")
+                _cb(f"⚠️ URL resolve failed ({share_r.status_code}): {share_r.text[:100]}")
         except Exception as ex:
-            _cb(f"⚠️ URL parse error: {ex} — trying search…")
+            _cb(f"⚠️ URL error: {ex}")
 
-    # ── 2. Search shared items ────────────────────────────────────────
+    # ── 2. Search personal OneDrive by name ──────────────────────────
+    if not folder_id:
+        _cb("🔍 Searching personal OneDrive…")
+        r = requests.get(
+            "https://graph.microsoft.com/v1.0/me/drive/root/search"
+            f"(q='{folder_name}')?$select=id,name,webUrl,folder,parentReference",
+            headers=h, timeout=20)
+        if r.status_code == 200:
+            hits = [i for i in r.json().get("value", [])
+                    if folder_name.lower() in i.get("name","").lower()]
+            if hits:
+                item         = hits[0]
+                folder_id    = item["id"]
+                drv          = item.get("parentReference", {}).get("driveId", "")
+                drive_prefix = f"drives/{drv}" if drv else "me/drive"
+                _cb(f"✅ Found in personal OneDrive: '{item['name']}'")
+
+    # ── 3. Search sharedWithMe ────────────────────────────────────────
     if not folder_id:
         _cb("🔍 Searching shared items…")
-        all_items = []
-        next_url  = ("https://graph.microsoft.com/v1.0/me/drive/sharedWithMe"
-                     "?$select=id,name,webUrl,folder,remoteItem&$top=100")
-        while next_url:
+        next_url = ("https://graph.microsoft.com/v1.0/me/drive/sharedWithMe"
+                    "?$select=id,name,folder,remoteItem&$top=100")
+        while next_url and not folder_id:
             rs = requests.get(next_url, headers=h, timeout=20)
             if rs.status_code != 200: break
-            all_items.extend(rs.json().get("value", []))
+            for item in rs.json().get("value", []):
+                if folder_name.lower() in item.get("name", "").lower():
+                    remote       = item.get("remoteItem", {})
+                    folder_id    = remote.get("id") or item.get("id", "")
+                    drv          = (remote.get("parentReference", {}).get("driveId", "")
+                                    or item.get("parentReference", {}).get("driveId", ""))
+                    drive_prefix = f"drives/{drv}" if drv else "me/drive"
+                    _cb(f"✅ Found in shared items: '{item['name']}'")
+                    break
             next_url = rs.json().get("@odata.nextLink")
 
-        for item in all_items:
-            if folder_name.lower() in item.get("name", "").lower():
-                remote       = item.get("remoteItem", {})
-                # Use remote item IDs for shared folders
-                remote_id    = remote.get("id", "")
-                remote_drive = (remote.get("parentReference", {}).get("driveId", "")
-                                or remote.get("sharepointIds", {}).get("siteId", ""))
-                folder_id    = remote_id or item.get("id", "")
-                drv          = (remote_drive
-                                or item.get("parentReference", {}).get("driveId", ""))
-                drive_prefix = f"drives/{drv}" if drv else "me/drive"
-                _cb(f"✅ Found in shared items: '{item['name']}' (drive: {drv[:20]}…)")
-                break
-
-    # ── 3. Create folder in personal drive if still not found ─────────
+    # ── 4. Give up — do NOT auto-create ──────────────────────────────
     if not folder_id:
-        _cb(f"📁 Not found — creating '{folder_name}' in your OneDrive…")
-        cr = requests.post(
-            "https://graph.microsoft.com/v1.0/me/drive/root/children",
-            headers=h,
-            json={"name": folder_name, "folder": {},
-                  "@microsoft.graph.conflictBehavior": "rename"},
-            timeout=20)
-        if cr.status_code in (200, 201):
-            folder_id    = cr.json()["id"]
-            drive_prefix = "me/drive"
-            _cb(f"✅ Created folder '{folder_name}' in your OneDrive")
-        else:
-            return False, f"Could not find or create folder (HTTP {cr.status_code}): {cr.text[:200]}"
+        return False, (
+            f"❌ Folder '{folder_name}' not found.\n\n"
+            f"Please paste the folder URL in the **OneDrive folder URL** field above. "
+            f"Open the folder in your browser and copy the address bar URL."
+        )
 
     # ── 4. Create upload session ──────────────────────────────────────
     _cb("⬆️ Creating upload session…")
@@ -544,23 +529,34 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, s
     ]
 
     r2 = None
+    errors = []
     for i, session_url in enumerate(urls_to_try):
-        _cb(f"   Trying URL format {i+1}…")
-        r2 = requests.post(
-            session_url, headers=h,
-            json={"item": {"@microsoft.graph.conflictBehavior": "rename"}},
-            timeout=30)
-        _cb(f"   Response: HTTP {r2.status_code}")
-        if r2.status_code in (200, 201):
-            break
+        _cb(f"   Trying URL format {i+1}: …{session_url[-60:]}")
+        try:
+            r2 = requests.post(
+                session_url, headers=h,
+                json={"item": {"@microsoft.graph.conflictBehavior": "rename"}},
+                timeout=30)
+            _cb(f"   Response: HTTP {r2.status_code}")
+            if r2.status_code in (200, 201):
+                break
+            else:
+                errors.append(f"Format {i+1} → HTTP {r2.status_code}: {r2.text[:100]}")
+                r2 = None
+        except Exception as ex:
+            errors.append(f"Format {i+1} → Exception: {ex}")
+            r2 = None
 
-    if r2 is None or r2.status_code not in (200, 201):
+    if r2 is None:
+        err_detail = "\n".join(errors)
         return False, (
-            f"Upload session failed (HTTP {r2.status_code if r2 else '?'}): "
-            f"{r2.text[:300] if r2 else 'No response'}"
+            f"❌ All upload session attempts failed:\n{err_detail}\n\n"
+            f"folder_id=`{folder_id}` drive=`{drive_prefix}`"
         )
 
-    upload_url = r2.json()["uploadUrl"]
+    upload_url = r2.json().get("uploadUrl")
+    if not upload_url:
+        return False, f"❌ No uploadUrl in response: {r2.text[:300]}"
 
     # ── 5. Upload in 5 MB chunks (smaller = safer on Streamlit Cloud) ──
     CHUNK    = 5 * 1024 * 1024   # 5 MB — must be multiple of 320 KB
@@ -654,15 +650,15 @@ video{border-radius:12px;border:1px solid rgba(96,204,190,.2)}
 
 # ──────────────────────── HEADER ──────────────────────────────────────────
 st.markdown("""<div style="display:flex;align-items:center;gap:16px;margin-bottom:8px">
-  <h1 style="margin:0;font-size:28px">🎬SLC Chapter Wise Video Creator</h1>
+  <h1 style="margin:0;font-size:28px">🎬 SLC Video Merger</h1>
   <span style="background:#60ccbe;color:#0a2a3c;font-size:11px;font-weight:700;
         padding:3px 12px;border-radius:20px;text-transform:uppercase">Fast</span>
 </div>""", unsafe_allow_html=True)
 st.markdown("""<div style="text-align:center;margin:8px 0 24px">
-  <span class="fb">Custom Intro</span><span class="fa">→</span>
-  <span class="fb">Transition</span><span class="fa">→</span>
-  <span class="fb">NotebookLM Video</span><span class="fa">→</span>
-  <span class="fb">Outro</span>
+  <span class="fb">🎬 Custom Intro</span><span class="fa">→</span>
+  <span class="fb">🟪🟦🟩⬜ Transition</span><span class="fa">→</span>
+  <span class="fb">📹 NotebookLM Video</span><span class="fa">→</span>
+  <span class="fb">🔚 Outro</span>
 </div>""", unsafe_allow_html=True)
 
 # ── 1  INTRO ──────────────────────────────────────────────────────────────
@@ -688,99 +684,20 @@ st.markdown("---")
 
 
 
-# ── 2c  ONEDRIVE ──────────────────────────────────────────────────────────
-st.markdown('<div><span class="sn">☁</span><span class="st">OneDrive Upload (Optional)</span></div>', unsafe_allow_html=True)
-
-if not ONEDRIVE_AVAILABLE:
-    st.warning("Run `pip install msal requests` to enable OneDrive upload.")
-else:
-    token = _get_access_token()
-
-    if token:
-        # Already signed in
-        st.success("✅ Connected to Microsoft OneDrive.")
-        if st.button("🔓 Sign out"):
-            TOKEN_CACHE_FILE.unlink(missing_ok=True)
-            st.session_state.pop("ms_flow", None)
-            st.rerun()
-        onedrive_folder = st.text_input(
-            "OneDrive folder name",
-            value=st.session_state.get("_od_folder", "NotebookLM Overview Videos for SLC"),
-            help="Type the exact folder name in your OneDrive where videos should be saved.",
-        )
-        st.session_state["_od_folder"] = onedrive_folder
-
-        # Paste folder URL for shared folders (more reliable than search)
-        onedrive_url_input = st.text_input(
-            "Or paste the OneDrive folder URL (for shared folders)",
-            value=st.session_state.get("_od_url", ""),
-            placeholder="https://...sharepoint.com/...id=%2Fpersonal%2F...",
-            help="Open the shared folder in OneDrive → copy the URL from your browser address bar → paste here. This bypasses the search and works for any shared folder.",
-        )
-        if onedrive_url_input.strip():
-            st.session_state["_od_url"] = onedrive_url_input.strip()
-            st.info("📎 Folder URL provided — will use this instead of searching by name.")
-
-        # ── Test connection button ─────────────────────────────────
-        if st.button("🔍 Test Folder Connection", type="secondary"):
-            import requests as _req
-            _headers = {"Authorization": f"Bearer {token}"}
-
-            # Step 1: verify token
-            me = _req.get("https://graph.microsoft.com/v1.0/me",
-                          headers=_headers, timeout=15)
-            if me.status_code != 200:
-                st.error(f"❌ Token invalid (HTTP {me.status_code}). Sign out and reconnect.")
-            else:
-                st.success(f"✅ Token valid — signed in as **{me.json().get('displayName','?')}**")
-
-                # Step 2: personal OneDrive search
-                r1 = _req.get(
-                    f"https://graph.microsoft.com/v1.0/me/drive/root/search"
-                    f"(q='{onedrive_folder}')?$select=id,name,webUrl,folder",
-                    headers=_headers, timeout=15)
-                hits = [i for i in r1.json().get("value",[]) if "folder" in i] if r1.status_code==200 else []
-                if hits:
-                    st.success(f"✅ Found in personal OneDrive: `{hits[0]['name']}`")
-                else:
-                    st.warning("⚠️ Not in personal OneDrive")
-
-                    # Step 3: sharedWithMe with full pagination
-                    all_shared = []
-                    next_url = ("https://graph.microsoft.com/v1.0/me/drive/sharedWithMe"
-                                "?$select=id,name,webUrl,folder,remoteItem&$top=100")
-                    page = 0
-                    while next_url and page < 10:
-                        r2 = _req.get(next_url, headers=_headers, timeout=15)
-                        if r2.status_code != 200:
-                            st.error(f"Shared items error: {r2.text[:200]}")
-                            break
-                        all_shared.extend(r2.json().get("value", []))
-                        next_url = r2.json().get("@odata.nextLink")
-                        page += 1
-
-                    st.write(f"**Shared items (all pages):** {len(all_shared)} items found")
-                    # Show ALL item names so user can see what's available
-                    all_names = [i.get("name","?") for i in all_shared]
-                    st.write(f"All shared items: {all_names}")
-
-                    matches = [i for i in all_shared
-                               if onedrive_folder.lower() in i.get("name","").lower()]
-                    if matches:
-                        st.success(f"✅ Found: `{matches[0]['name']}` — upload should work!")
-                    else:
-                        st.error(
-                            f"❌ **'{onedrive_folder}'** not found in {len(all_shared)} shared items.\n\n"
-                            f"Check the list above — copy the exact folder name and paste it above.")
-    else:
+# ── 2c  ONEDRIVE — auto-connect, fixed folder ────────────────────────────
+# Sign in once with the department account — no UI needed after that.
+if ONEDRIVE_AVAILABLE:
+    _token = _get_access_token()
+    if not _token:
+        # First run — show one-time device-code sign-in
+        st.markdown('<div><span class="sn">☁</span><span class="st">OneDrive — One-time Setup</span></div>', unsafe_allow_html=True)
         st.markdown(
-            '<p style="font-size:13px;color:rgba(255,255,255,.6);margin-bottom:8px">'
-            'Sign in with your Microsoft account once — stays connected for future runs.</p>',
+            '<p style="font-size:13px;color:rgba(255,255,255,.7);margin-bottom:8px">'
+            'Sign in once with the department Microsoft account — '
+            'stays connected permanently for all users.</p>',
             unsafe_allow_html=True)
-        onedrive_folder = None
-
         if "ms_flow" not in st.session_state:
-            if st.button("🔑 Connect Microsoft Account"):
+            if st.button("🔑 Connect Department Microsoft Account"):
                 with st.spinner("Starting sign-in…"):
                     flow = _start_device_flow()
                 st.rerun()
@@ -794,19 +711,18 @@ else:
             <strong>Step 2</strong> — Enter this code: &nbsp;
             <code style="background:#1a3a5c;padding:4px 12px;border-radius:6px;font-size:18px;
                           letter-spacing:3px;color:#60ccbe">{flow['user_code']}</code><br><br>
-            <strong>Step 3</strong> — Sign in with your Microsoft/work account,
-            then click the button below.
-            </div>
-            """, unsafe_allow_html=True)
-
+            <strong>Step 3</strong> — Sign in with the <strong>department</strong> Microsoft account,
+            then click below.
+            </div>""", unsafe_allow_html=True)
             if st.button("✅ I've signed in — complete connection"):
                 with st.spinner("Completing sign-in…"):
                     ok, result = _complete_device_flow()
                 if ok:
-                    st.success("✅ Connected! Ready to upload to OneDrive.")
+                    st.success("✅ Connected! Upload will be available after merging.")
                     st.rerun()
                 else:
                     st.error(f"Sign-in failed: {result}")
+        st.markdown("---")
 
 st.markdown("---")
 
@@ -900,12 +816,9 @@ if st.session_state.get("video_data"):
     st.download_button("⬇ Download Final Video", data, filename,
                        "video/mp4", use_container_width=True)
 
-    # ── OneDrive upload ───────────────────────────────────────────────
+    # ── OneDrive upload — uses fixed department folder ───────────────
     current_token = _get_access_token()
-    # Use session_state folder, fall back to default so it always shows
-    _od_folder = (st.session_state.get("_od_folder")
-                  or "NotebookLM Overview Videos for SLC")
-    if current_token:
+    if current_token and ONEDRIVE_AVAILABLE:
         st.markdown("---")
         st.markdown('<div style="margin:8px 0"><span class="sn">☁</span>'
             '<span class="st">Save to OneDrive</span></div>', unsafe_allow_html=True)
@@ -915,7 +828,6 @@ if st.session_state.get("video_data"):
 
             def _log(s):
                 stat.info(s)
-                # Update progress bar based on percentage in message
                 if "%" in s:
                     try:
                         pct = int(s.split("%")[0].split()[-1])
@@ -924,9 +836,10 @@ if st.session_state.get("video_data"):
                         pass
 
             ok, result = _onedrive_upload(
-                data, filename, _od_folder, current_token,
+                data, filename, "",
+                current_token,
                 status_cb=_log,
-                folder_url=st.session_state.get("_od_url", ""),
+                folder_url=ONEDRIVE_FOLDER_URL,
             )
             prog.empty()
             if ok:

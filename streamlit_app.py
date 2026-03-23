@@ -543,16 +543,25 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, s
     # ── 4. Create upload session ──────────────────────────────────────
     _cb("⬆️ Creating upload session…")
 
-    # Build URL — try three formats in order of reliability
+    # Build URL — prioritise folder_id based URL when we have one
     safe_name = filename.replace(" ", "_")
-    urls_to_try = [
-        # Format 1: path-based on personal drive (most reliable for personal folders)
-        f"https://graph.microsoft.com/v1.0/me/drive/root:/{folder_name}/{safe_name}:/createUploadSession",
-        # Format 2: drive+item based (needed for shared/remote folders)
-        f"https://graph.microsoft.com/v1.0/{drive_prefix}/items/{folder_id}:/{safe_name}:/createUploadSession",
-        # Format 3: drive+item with original filename
-        f"https://graph.microsoft.com/v1.0/{drive_prefix}/items/{folder_id}:/{filename}:/createUploadSession",
-    ]
+    if folder_id and drive_prefix != "me/drive":
+        # Shared/remote folder — use drive+item format (most correct)
+        urls_to_try = [
+            f"https://graph.microsoft.com/v1.0/{drive_prefix}/items/{folder_id}:/{safe_name}:/createUploadSession",
+            f"https://graph.microsoft.com/v1.0/{drive_prefix}/items/{folder_id}:/{filename}:/createUploadSession",
+        ]
+    elif folder_id:
+        # Personal drive folder resolved by ID
+        urls_to_try = [
+            f"https://graph.microsoft.com/v1.0/me/drive/items/{folder_id}:/{safe_name}:/createUploadSession",
+            f"https://graph.microsoft.com/v1.0/me/drive/root:/{folder_name}/{safe_name}:/createUploadSession",
+        ]
+    else:
+        # Fallback: path-based
+        urls_to_try = [
+            f"https://graph.microsoft.com/v1.0/me/drive/root:/{folder_name}/{safe_name}:/createUploadSession",
+        ]
 
     r2 = None
     errors = []

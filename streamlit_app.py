@@ -39,10 +39,6 @@ TOKEN_CACHE_FILE = Path("/tmp/ms_token_cache.json")
 # ── Watermark / badge cover ───────────────────────────────────────────────
 WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1655, 960, 240, 72
 
-# Zone 1: top-centre "NotebookLM" badge on first/title slide
-# Covers both 1920x1080 native (badge at y≈148) and 1280x720 scaled (badge at y≈68)
-# Background is near-white so the box is invisible
-WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H = 790, 58, 320, 155
 BOX_RADIUS = 10
 WM_EC_X, WM_EC_Y, WM_EC_W, WM_EC_H = 448, 310, 1024, 420
 EC_RADIUS  = 14
@@ -267,61 +263,6 @@ def normalise(inp, out):
     cmd += [str(out)]; _ff(cmd); return Path(out)
 
 
-def _detect_top_badge_times(path, max_scan=90.0):
-    """
-    Detect timestamps where NotebookLM top badge is visible.
-    Looks for the teal green colour (R~96 G~204 B~190) of the
-    NotebookLM logo in the top-centre watermark region.
-    Returns (start_time, end_time) or None if not found.
-    """
-    try:
-        src_w, src_h = _probe_resolution(path)
-    except Exception:
-        src_w, src_h = 1920, 1080
-
-    sx, sy = src_w / 1920, src_h / 1080
-    rx  = max(0, int(WM_TOP_X * sx))
-    ry  = max(0, int(WM_TOP_Y * sy))
-    rw  = max(1, int(WM_TOP_W * sx))
-    rh  = max(1, int(WM_TOP_H * sy))
-
-    step     = 0.5
-    t        = 0.0
-    total    = _probe_duration(path)
-    scan_end = min(max_scan, total - 1.0)
-    badge_times = []
-
-    while t <= scan_end:
-        fd, tf = tempfile.mkstemp(suffix=".jpg"); os.close(fd)
-        try:
-            subprocess.run(
-                ["ffmpeg", "-y", "-ss", f"{t:.2f}", "-i", str(path),
-                 "-vframes", "1", tf],
-                capture_output=True, timeout=8)
-            img    = Image.open(tf).convert("RGB")
-            region = np.array(img)[ry:ry+rh, rx:rx+rw].astype(int)
-            if region.size == 0:
-                t += step; continue
-            r, g, b   = region[:,:,0], region[:,:,1], region[:,:,2]
-            total_px  = region.shape[0] * region.shape[1]
-            # NotebookLM teal badge: R 60-140, G 160-230, B 140-220
-            teal = ((r>60)&(r<140)&(g>160)&(g<230)&(b>140)&(b<220)).sum()
-            if teal > total_px * 0.008:   # >0.8% teal pixels = badge present
-                badge_times.append(t)
-        except Exception:
-            pass
-        finally:
-            try: os.unlink(tf)
-            except OSError: pass
-        t += step
-
-    if not badge_times:
-        return None   # No badge found — skip Zone 1 entirely
-
-    return (max(0.0, badge_times[0] - 0.25),
-            badge_times[-1] + 1.0)
-
-
 def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None):
     inp_str, out_str = str(inp), str(out)
 
@@ -339,21 +280,6 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
 
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
-    # Zone 1: detect NotebookLM top badge by teal colour
-    if progress_cb: progress_cb("Detecting top watermark badge…")
-    badge_range = _detect_top_badge_times(inp_str)
-    top_png     = tmp / "wm_top.png"
-    if badge_range:
-        s, e = badge_range
-        if progress_cb: progress_cb(f"   Badge visible {s:.1f}s – {e:.1f}s")
-        _make_box_png([(WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H, BOX_RADIUS)],
-                      top_png, colour=(249, 249, 249, 255))
-        enable_top = f"between(t\\,{s:.2f}\\,{e:.2f})"
-    else:
-        if progress_cb: progress_cb("   No top badge detected — skipping")
-        Image.new("RGBA", (1920, 1080), (0,0,0,0)).save(str(top_png), "PNG")
-        enable_top = "0"
-
     if use_logo:
         comp_png = _make_logo_composite(
             logo_path=SLC_LOGO,
@@ -361,22 +287,18 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
         )
         fc = (
             "[1:v]format=rgba[comp];"
-            "[0:v][comp]overlay=x=0:y=0[v1];"
-            "[2:v]format=rgba[top];"
-            f"[v1][top]overlay=x=0:y=0:enable='{enable_top}'[vout]"
+            "[0:v][comp]overlay=x=0:y=0[vout]"
         )
-        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(comp_png),"-i",str(top_png)]
+        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(comp_png)]
     else:
         br_png = tmp/"wm_br.png"
         _make_box_png([(WM_BR_X,WM_BR_Y,WM_BR_W,WM_BR_H,BOX_RADIUS)],
                       br_png, colour=(249,249,249,255))
         fc = (
             "[1:v]format=rgba[br];"
-            "[0:v][br]overlay=x=0:y=0[v1];"
-            "[2:v]format=rgba[top];"
-            f"[v1][top]overlay=x=0:y=0:enable='{enable_top}'[vout]"
+            "[0:v][br]overlay=x=0:y=0[vout]"
         )
-        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(br_png),"-i",str(top_png)]
+        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(br_png)]
 
     # Add trim via -t if end card was detected
     if trim_at is not None:

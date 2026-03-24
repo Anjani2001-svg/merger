@@ -267,18 +267,29 @@ def normalise(inp, out):
     cmd += [str(out)]; _ff(cmd); return Path(out)
 
 
-def _detect_title_slide_end(path, max_scan=60.0):
+def _detect_top_badge_times(path, max_scan=90.0):
     """
-    Scan from t=0 to find when the NotebookLM title/intro slide ends.
-    The title slide is near-white (>85% bright pixels).
-    Returns the timestamp when the first non-title frame appears,
-    plus a 0.5s safety buffer. Falls back to 25s if not detected.
+    Detect timestamps where NotebookLM top badge is visible.
+    Looks for the teal green colour (R~96 G~204 B~190) of the
+    NotebookLM logo in the top-centre watermark region.
+    Returns (start_time, end_time) or None if not found.
     """
-    step  = 0.5
-    t     = 0.0
-    total = _probe_duration(path)
-    scan_end = min(max_scan, total - 2.0)
-    last_bright_t = 0.0
+    try:
+        src_w, src_h = _probe_resolution(path)
+    except Exception:
+        src_w, src_h = 1920, 1080
+
+    sx, sy = src_w / 1920, src_h / 1080
+    rx  = max(0, int(WM_TOP_X * sx))
+    ry  = max(0, int(WM_TOP_Y * sy))
+    rw  = max(1, int(WM_TOP_W * sx))
+    rh  = max(1, int(WM_TOP_H * sy))
+
+    step     = 0.5
+    t        = 0.0
+    total    = _probe_duration(path)
+    scan_end = min(max_scan, total - 1.0)
+    badge_times = []
 
     while t <= scan_end:
         fd, tf = tempfile.mkstemp(suffix=".jpg"); os.close(fd)
@@ -287,15 +298,16 @@ def _detect_title_slide_end(path, max_scan=60.0):
                 ["ffmpeg", "-y", "-ss", f"{t:.2f}", "-i", str(path),
                  "-vframes", "1", tf],
                 capture_output=True, timeout=8)
-            img = Image.open(tf)
-            a   = np.array(img)
-            bright_frac = (a.mean(axis=2) > 200).mean()
-            if bright_frac > 0.75:
-                # Still on title/near-white slide
-                last_bright_t = t
-            else:
-                # First content frame found — title ended just before this
-                return last_bright_t + 0.5
+            img    = Image.open(tf).convert("RGB")
+            region = np.array(img)[ry:ry+rh, rx:rx+rw].astype(int)
+            if region.size == 0:
+                t += step; continue
+            r, g, b   = region[:,:,0], region[:,:,1], region[:,:,2]
+            total_px  = region.shape[0] * region.shape[1]
+            # NotebookLM teal badge: R 60-140, G 160-230, B 140-220
+            teal = ((r>60)&(r<140)&(g>160)&(g<230)&(b>140)&(b<220)).sum()
+            if teal > total_px * 0.008:   # >0.8% teal pixels = badge present
+                badge_times.append(t)
         except Exception:
             pass
         finally:
@@ -303,8 +315,11 @@ def _detect_title_slide_end(path, max_scan=60.0):
             except OSError: pass
         t += step
 
-    # Fallback: never found a dark frame — return last bright time + buffer
-    return min(last_bright_t + 0.5, 25.0)
+    if not badge_times:
+        return None   # No badge found — skip Zone 1 entirely
+
+    return (max(0.0, badge_times[0] - 0.25),
+            badge_times[-1] + 1.0)
 
 
 def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None):
@@ -324,14 +339,20 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
 
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
-    # Zone 1: top-centre watermark — detect title slide duration dynamically
-    if progress_cb: progress_cb("Detecting title slide duration…")
-    title_end  = _detect_title_slide_end(inp_str)
-    if progress_cb: progress_cb(f"   Title slide ends at ~{title_end:.1f}s")
-    top_png    = tmp / "wm_top.png"
-    _make_box_png([(WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H, BOX_RADIUS)],
-                  top_png, colour=(249, 249, 249, 255))
-    enable_top = f"between(t\\,0\\,{title_end:.2f})"
+    # Zone 1: detect NotebookLM top badge by teal colour
+    if progress_cb: progress_cb("Detecting top watermark badge…")
+    badge_range = _detect_top_badge_times(inp_str)
+    top_png     = tmp / "wm_top.png"
+    if badge_range:
+        s, e = badge_range
+        if progress_cb: progress_cb(f"   Badge visible {s:.1f}s – {e:.1f}s")
+        _make_box_png([(WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H, BOX_RADIUS)],
+                      top_png, colour=(249, 249, 249, 255))
+        enable_top = f"between(t\\,{s:.2f}\\,{e:.2f})"
+    else:
+        if progress_cb: progress_cb("   No top badge detected — skipping")
+        Image.new("RGBA", (1920, 1080), (0,0,0,0)).save(str(top_png), "PNG")
+        enable_top = "0"
 
     if use_logo:
         comp_png = _make_logo_composite(

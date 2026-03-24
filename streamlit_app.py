@@ -40,7 +40,6 @@ TOKEN_CACHE_FILE = Path("/tmp/ms_token_cache.json")
 WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1655, 960, 240, 72
 # Top watermark: NotebookLM badge, very top-centre of frame
 WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H = 760, 48, 390, 72
-WM_TOP_SECS = 8   # cover first 8s — title slide is always here
 
 BOX_RADIUS = 10
 WM_EC_X, WM_EC_Y, WM_EC_W, WM_EC_H = 448, 310, 1024, 420
@@ -266,6 +265,67 @@ def normalise(inp, out):
     cmd += [str(out)]; _ff(cmd); return Path(out)
 
 
+def _detect_top_watermark_end(path, max_scan=120.0):
+    """
+    Detect when NotebookLM top watermark disappears using frame comparison.
+    Grabs the first frame (has the badge), then scans forward until
+    that specific region changes significantly = slide transitioned = badge gone.
+    Returns end_time in seconds, or 0.0 if no badge detected.
+    """
+    try:
+        src_w, src_h = _probe_resolution(path)
+    except Exception:
+        src_w, src_h = 1920, 1080
+
+    sx = src_w / 1920
+    sy = src_h / 1080
+    rx = max(0, int(WM_TOP_X * sx))
+    ry = max(0, int(WM_TOP_Y * sy))
+    rw = max(1, int(WM_TOP_W * sx))
+    rh = max(1, int(WM_TOP_H * sy))
+
+    def _grab_region(t):
+        fd, tf = tempfile.mkstemp(suffix=".jpg"); os.close(fd)
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-ss", f"{t:.2f}", "-i", str(path),
+                 "-vframes", "1", tf],
+                capture_output=True, timeout=8)
+            img = Image.open(tf).convert("RGB")
+            return np.array(img)[ry:ry+rh, rx:rx+rw].astype(float)
+        except Exception:
+            return None
+        finally:
+            try: os.unlink(tf)
+            except OSError: pass
+
+    # Get reference frame (t=0)
+    ref = _grab_region(0.0)
+    if ref is None or ref.size == 0:
+        return 0.0
+    # If region is not near-white, no badge present
+    if (ref > 200).mean() < 0.60:
+        return 0.0
+
+    total    = _probe_duration(path)
+    scan_end = min(max_scan, total - 2.0)
+    step     = 0.5
+    t        = step
+    last_t   = 0.0
+
+    while t <= scan_end:
+        frame = _grab_region(t)
+        if frame is not None and frame.size > 0:
+            diff = np.abs(frame - ref).mean()
+            if diff < 12:
+                last_t = t   # region unchanged — badge still present
+            else:
+                return last_t + step   # region changed — badge gone
+        t += step
+
+    return min(last_t + step, max_scan)
+
+
 def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None):
     inp_str, out_str = str(inp), str(out)
 
@@ -283,11 +343,21 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
 
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
-    # Zone 1: top badge — white box over exact badge area, first WM_TOP_SECS only
+    # Zone 1: top badge — detect duration by frame comparison
+    if progress_cb: progress_cb("Detecting top watermark duration…")
+    top_end = _detect_top_watermark_end(inp_str)
     top_png = tmp / "wm_top.png"
-    _make_box_png([(WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H, BOX_RADIUS)],
-                  top_png, colour=(249, 249, 249, 255))
-    en_top = f"lte(t\,{WM_TOP_SECS})"
+    if top_end > 0.5:
+        if progress_cb: progress_cb(f"   Badge visible until ~{top_end:.1f}s")
+        _make_box_png([(WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H, BOX_RADIUS)],
+                      top_png, colour=(249, 249, 249, 255))
+        use_top  = True
+        en_top   = f"lte(t\\,{top_end:.2f})"
+    else:
+        if progress_cb: progress_cb("   No top badge detected — skipping")
+        Image.new("RGBA", (1920, 1080), (0,0,0,0)).save(str(top_png), "PNG")
+        use_top = False
+        en_top  = "0"
 
     if use_logo:
         comp_png = _make_logo_composite(

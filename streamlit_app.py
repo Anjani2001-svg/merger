@@ -38,6 +38,11 @@ TOKEN_CACHE_FILE = Path("/tmp/ms_token_cache.json")
 
 # ── Watermark / badge cover ───────────────────────────────────────────────
 WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1655, 960, 240, 72
+
+# Zone 1: top-centre "NotebookLM" badge on first/title slide
+# Covers both 1920x1080 native (badge at y≈148) and 1280x720 scaled (badge at y≈68)
+# Background is near-white so the box is invisible
+WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H = 790, 58, 320, 155
 BOX_RADIUS = 10
 WM_EC_X, WM_EC_Y, WM_EC_W, WM_EC_H = 448, 310, 1024, 420
 EC_RADIUS  = 14
@@ -262,6 +267,46 @@ def normalise(inp, out):
     cmd += [str(out)]; _ff(cmd); return Path(out)
 
 
+def _detect_title_slide_end(path, max_scan=60.0):
+    """
+    Scan from t=0 to find when the NotebookLM title/intro slide ends.
+    The title slide is near-white (>85% bright pixels).
+    Returns the timestamp when the first non-title frame appears,
+    plus a 0.5s safety buffer. Falls back to 25s if not detected.
+    """
+    step  = 0.5
+    t     = 0.0
+    total = _probe_duration(path)
+    scan_end = min(max_scan, total - 2.0)
+    last_bright_t = 0.0
+
+    while t <= scan_end:
+        fd, tf = tempfile.mkstemp(suffix=".jpg"); os.close(fd)
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-ss", f"{t:.2f}", "-i", str(path),
+                 "-vframes", "1", tf],
+                capture_output=True, timeout=8)
+            img = Image.open(tf)
+            a   = np.array(img)
+            bright_frac = (a.mean(axis=2) > 200).mean()
+            if bright_frac > 0.75:
+                # Still on title/near-white slide
+                last_bright_t = t
+            else:
+                # First content frame found — title ended just before this
+                return last_bright_t + 0.5
+        except Exception:
+            pass
+        finally:
+            try: os.unlink(tf)
+            except OSError: pass
+        t += step
+
+    # Fallback: never found a dark frame — return last bright time + buffer
+    return min(last_bright_t + 0.5, 25.0)
+
+
 def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None):
     inp_str, out_str = str(inp), str(out)
 
@@ -279,6 +324,15 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
 
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
+    # Zone 1: top-centre watermark — detect title slide duration dynamically
+    if progress_cb: progress_cb("Detecting title slide duration…")
+    title_end  = _detect_title_slide_end(inp_str)
+    if progress_cb: progress_cb(f"   Title slide ends at ~{title_end:.1f}s")
+    top_png    = tmp / "wm_top.png"
+    _make_box_png([(WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H, BOX_RADIUS)],
+                  top_png, colour=(249, 249, 249, 255))
+    enable_top = f"between(t\\,0\\,{title_end:.2f})"
+
     if use_logo:
         comp_png = _make_logo_composite(
             logo_path=SLC_LOGO,
@@ -286,18 +340,22 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
         )
         fc = (
             "[1:v]format=rgba[comp];"
-            "[0:v][comp]overlay=x=0:y=0[vout]"
+            "[0:v][comp]overlay=x=0:y=0[v1];"
+            "[2:v]format=rgba[top];"
+            f"[v1][top]overlay=x=0:y=0:enable='{enable_top}'[vout]"
         )
-        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(comp_png)]
+        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(comp_png),"-i",str(top_png)]
     else:
         br_png = tmp/"wm_br.png"
         _make_box_png([(WM_BR_X,WM_BR_Y,WM_BR_W,WM_BR_H,BOX_RADIUS)],
                       br_png, colour=(249,249,249,255))
         fc = (
             "[1:v]format=rgba[br];"
-            "[0:v][br]overlay=x=0:y=0[vout]"
+            "[0:v][br]overlay=x=0:y=0[v1];"
+            "[2:v]format=rgba[top];"
+            f"[v1][top]overlay=x=0:y=0:enable='{enable_top}'[vout]"
         )
-        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(br_png)]
+        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(br_png),"-i",str(top_png)]
 
     # Add trim via -t if end card was detected
     if trim_at is not None:

@@ -38,6 +38,9 @@ TOKEN_CACHE_FILE = Path("/tmp/ms_token_cache.json")
 
 # ── Watermark / badge cover ───────────────────────────────────────────────
 WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1655, 960, 240, 72
+# Top watermark: NotebookLM badge, very top-centre of frame
+WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H = 760, 48, 390, 72
+WM_TOP_SECS = 8   # cover first 8s — title slide is always here
 
 BOX_RADIUS = 10
 WM_EC_X, WM_EC_Y, WM_EC_W, WM_EC_H = 448, 310, 1024, 420
@@ -280,6 +283,12 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
 
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
+    # Zone 1: top badge — white box over exact badge area, first WM_TOP_SECS only
+    top_png = tmp / "wm_top.png"
+    _make_box_png([(WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H, BOX_RADIUS)],
+                  top_png, colour=(249, 249, 249, 255))
+    en_top = f"lte(t\,{WM_TOP_SECS})"
+
     if use_logo:
         comp_png = _make_logo_composite(
             logo_path=SLC_LOGO,
@@ -287,18 +296,22 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
         )
         fc = (
             "[1:v]format=rgba[comp];"
-            "[0:v][comp]overlay=x=0:y=0[vout]"
+            "[0:v][comp]overlay=x=0:y=0[v1];"
+            "[2:v]format=rgba[top];"
+            f"[v1][top]overlay=x=0:y=0:enable='{en_top}'[vout]"
         )
-        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(comp_png)]
+        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(comp_png),"-i",str(top_png)]
     else:
         br_png = tmp/"wm_br.png"
         _make_box_png([(WM_BR_X,WM_BR_Y,WM_BR_W,WM_BR_H,BOX_RADIUS)],
                       br_png, colour=(249,249,249,255))
         fc = (
             "[1:v]format=rgba[br];"
-            "[0:v][br]overlay=x=0:y=0[vout]"
+            "[0:v][br]overlay=x=0:y=0[v1];"
+            "[2:v]format=rgba[top];"
+            f"[v1][top]overlay=x=0:y=0:enable='{en_top}'[vout]"
         )
-        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(br_png)]
+        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(br_png),"-i",str(top_png)]
 
     # Add trim via -t if end card was detected
     if trim_at is not None:

@@ -6,6 +6,10 @@ FFmpeg only does: overlay PNG on video, normalise, transitions, concatenate.
 
 OneDrive upload uses Microsoft OAuth2 (device-code flow).
 No app registration key needed — just a Client ID from Azure.
+
+Title layout options:
+  - "1-line title"  → smaller cover for single-line course titles
+  - "2-line title"  → taller cover for two-line (wrapped) course titles
 """
 
 import os, json, subprocess, tempfile, time, uuid
@@ -24,7 +28,7 @@ except ImportError:
     ONEDRIVE_AVAILABLE = False
 
 # ── Embedded SLC logo (base64) — written to assets/ on startup ───────────
-_SLC_LOGO_B64 = "iVBORw0KGgoAAAANSUhEUgAAAHcAAABNCAYAAACc2PtBAAAtpElEQVR4nO29WY8kyZXv9ztm5mvsuWctXc1ukk1OX1KjucQVpAcBepAAfWJ9AAkC9HAx94ozHK69VFdlVVbusftiZnpwN0/PrC2bPcTVDHmAzIjwcHeLsGNn/x8LqWpHn4QPvwbAK7wAqNvz/DvO618iqvfKIR4Qh/LgpHded/67jzefCVT/ADT3e+e4vVF7z5VX773m3wupj5/yDpIPM/L7DPs+xvbJ37lG4e9d9zd6N5kfdvktkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRAAAAA="
+_SLC_LOGO_B64 = "iVBORw0KGgoAAAANSUhEUgAAAHcAAABNCAYAAACc2PtBAAAtpElEQVR4nO29WY8lyZXv9ztm5mvsuWctXc1ukk1OX1KjucQVpAcBepAAfWJ9AAkC9HAx94ozHK69VFdlVVbusftiZnpwN0/PrC2bPcTVDHmAzIjwcHeLsGNn/x8LqWpHn4QPvwbAK7wAqNvz/DvO618iqvfKIR4Qh/LgpHded/67jzefCVT/ADT3e+e4vVF7z5VX773m3wupj5/yDpIPM/L7DPs+xvbJ37lG4e9d9zd6N5kfdvktkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRAAAAA="
 
 st.set_page_config(page_title="SLC Video Merger", page_icon="🎬", layout="wide")
 
@@ -34,11 +38,31 @@ SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 
 TOKEN_CACHE_FILE = Path("/tmp/ms_token_cache.json")
 
-# ── Watermark / badge cover ───────────────────────────────────────────────
-WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1655, 960, 240, 72
-WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H = 760, 48, 390, 72
+# ── Watermark / badge cover coordinates (at 1920×1080, post-normalise) ───
+#   Measured from actual NotebookLM video frames at 1280×720 → ×1.5 scale.
+WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1555, 960, 365, 120
+WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H = 780, 128, 370, 68
 
 BOX_RADIUS = 10
+
+# ── Title-card cover coordinates (at 1920×1080) ─────────────────────────
+#   Covers ONLY the small "NotebookLM" icon+text on the intro card.
+#   Measured brand area: x≈814-1084, y≈149-177 (~270×28 px of actual text).
+#   The course title text BELOW it is left untouched.
+#
+#   "1-line title" → tight fit for standard single-line title layouts
+#   "2-line title" → slightly more generous for 2-line title layouts
+#                    (brand may shift a few pixels when title wraps)
+# ─────────────────────────────────────────────────────────────────────────
+WM_TITLE_1L_X, WM_TITLE_1L_Y = 790, 130
+WM_TITLE_1L_W, WM_TITLE_1L_H = 330, 58
+
+WM_TITLE_2L_X, WM_TITLE_2L_Y = 770, 120
+WM_TITLE_2L_W, WM_TITLE_2L_H = 370, 76
+
+TITLE_COVER_RADIUS = 6
+
+# ── End-card cover (large white box, unused unless enabled) ──────────────
 WM_EC_X, WM_EC_Y, WM_EC_W, WM_EC_H = 448, 310, 1024, 420
 EC_RADIUS  = 14
 
@@ -104,6 +128,22 @@ def _make_box_png(boxes, path, W=1920, H=1080, colour=(255,255,255,255)):
     draw = ImageDraw.Draw(img)
     for (x, y, w, h, r) in boxes:
         draw.rounded_rectangle([x, y, x+w, y+h], radius=r, fill=colour)
+    img.save(str(path), "PNG")
+    return path
+
+
+def _make_title_cover_png(path, title_layout="1-line", W=1920, H=1080):
+    """Create a PNG overlay that covers the NotebookLM logo + title text
+    on the intro card.  Size depends on 1-line vs 2-line title layout."""
+    img  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    if title_layout == "2-line":
+        tx, ty, tw, th = WM_TITLE_2L_X, WM_TITLE_2L_Y, WM_TITLE_2L_W, WM_TITLE_2L_H
+    else:
+        tx, ty, tw, th = WM_TITLE_1L_X, WM_TITLE_1L_Y, WM_TITLE_1L_W, WM_TITLE_1L_H
+    draw.rounded_rectangle([tx, ty, tx+tw, ty+th],
+                           radius=TITLE_COVER_RADIUS,
+                           fill=(249, 249, 249, 255))
     img.save(str(path), "PNG")
     return path
 
@@ -277,20 +317,86 @@ def _detect_top_watermark_end(path, max_scan=120.0):
     return min(last_t + step, max_scan)
 
 
-def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None):
+def _detect_title_card_end(path, max_scan=30.0):
+    """Detect when the NotebookLM intro title card transitions to content.
+
+    Samples the central title region; when the visual changes significantly
+    from frame 0, the title card has transitioned away.  Returns seconds.
+    """
+    try:
+        src_w, src_h = _probe_resolution(path)
+    except Exception:
+        src_w, src_h = 1920, 1080
+    sx = src_w / 1920; sy = src_h / 1080
+    # Sample the centre-top area where the title lives (use 2-line box as
+    # the detection region — it covers both layouts)
+    rx = max(0, int(WM_TITLE_2L_X * sx)); ry = max(0, int(WM_TITLE_2L_Y * sy))
+    rw = max(1, int(WM_TITLE_2L_W * sx)); rh = max(1, int(WM_TITLE_2L_H * sy))
+
+    def _grab(t):
+        fd, tf = tempfile.mkstemp(suffix=".jpg"); os.close(fd)
+        try:
+            subprocess.run(["ffmpeg","-y","-ss",f"{t:.2f}","-i",str(path),
+                             "-vframes","1",tf], capture_output=True, timeout=8)
+            img = Image.open(tf).convert("RGB")
+            return np.array(img)[ry:ry+rh, rx:rx+rw].astype(float)
+        except Exception:
+            return None
+        finally:
+            try: os.unlink(tf)
+            except OSError: pass
+
+    ref = _grab(0.0)
+    if ref is None or ref.size == 0:
+        return 0.0
+
+    total = _probe_duration(path)
+    scan_end = min(max_scan, total - 2.0)
+    step = 0.5; t = step; last_t = 0.0
+    while t <= scan_end:
+        frame = _grab(t)
+        if frame is not None and frame.size > 0:
+            diff = np.abs(frame - ref).mean()
+            if diff < 15:
+                last_t = t          # still on the title card
+            else:
+                return last_t + step   # title card just changed
+        t += step
+    return min(last_t + step, max_scan)
+
+
+def remove_notebooklm_watermark(inp, out, src_resolution, tmp,
+                                 title_layout="1-line", progress_cb=None):
+    """Remove NotebookLM watermarks from the video.
+
+    Covers:
+      1. Bottom-right "NotebookLM" badge (always, with SLC logo if available)
+      2. Top-centre badge (time-limited, auto-detected)
+      3. Title-card text area (time-limited, auto-detected, size per title_layout)
+      4. Trims the white end-card if detected
+
+    Args:
+        title_layout: "1-line" or "2-line" — controls the height of the
+                      title-card cover overlay.
+    """
     inp_str, out_str = str(inp), str(out)
+
+    # ── End-card detection & optional trim ────────────────────────────────
     if progress_cb: progress_cb("Detecting end-card start time…")
     ecs = _detect_end_card_start(inp_str); duration = _probe_duration(inp_str)
     trim_at = None
     if ecs < duration - 2.0:
         trim_at = ecs
         if progress_cb: progress_cb(f"✂️ Trimming end card at {ecs:.1f}s…")
+
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
+
+    # ── Top badge detection ───────────────────────────────────────────────
     if progress_cb: progress_cb("Detecting top watermark duration…")
     top_end = _detect_top_watermark_end(inp_str)
     top_png = tmp / "wm_top.png"
     if top_end > 0.5:
-        if progress_cb: progress_cb(f"   Badge visible until ~{top_end:.1f}s")
+        if progress_cb: progress_cb(f"   Top badge visible until ~{top_end:.1f}s")
         _make_box_png([(WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H, BOX_RADIUS)],
                       top_png, colour=(249, 249, 249, 255))
         use_top = True; en_top = f"lte(t\\,{top_end:.2f})"
@@ -298,19 +404,50 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
         if progress_cb: progress_cb("   No top badge detected — skipping")
         Image.new("RGBA", (1920, 1080), (0,0,0,0)).save(str(top_png), "PNG")
         use_top = False; en_top = "0"
+
+    # ── Title-card cover detection ────────────────────────────────────────
+    if progress_cb: progress_cb(f"Detecting title card duration ({title_layout})…")
+    title_end = _detect_title_card_end(inp_str)
+    title_png = tmp / "wm_title.png"
+    if title_end > 0.5:
+        if progress_cb: progress_cb(f"   Title card visible until ~{title_end:.1f}s")
+        _make_title_cover_png(title_png, title_layout=title_layout)
+        en_title = f"lte(t\\,{title_end:.2f})"
+        use_title = True
+    else:
+        if progress_cb: progress_cb("   No title card detected — skipping")
+        Image.new("RGBA", (1920, 1080), (0,0,0,0)).save(str(title_png), "PNG")
+        en_title = "0"
+        use_title = False
+
+    # ── Build FFmpeg filter graph ─────────────────────────────────────────
+    #  Inputs:  [0] = video   [1] = BR cover   [2] = top badge   [3] = title card
     if use_logo:
         comp_png = _make_logo_composite(logo_path=SLC_LOGO, box=(WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H))
-        fc = ("[1:v]format=rgba[comp];[0:v][comp]overlay=x=0:y=0[v1];"
-              "[2:v]format=rgba[top];"
-              f"[v1][top]overlay=x=0:y=0:enable='{en_top}'[vout]")
-        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(comp_png),"-i",str(top_png)]
+        fc = (
+            "[1:v]format=rgba[comp];"
+            "[0:v][comp]overlay=x=0:y=0[v1];"
+            "[2:v]format=rgba[top];"
+            f"[v1][top]overlay=x=0:y=0:enable='{en_top}'[v2];"
+            "[3:v]format=rgba[title];"
+            f"[v2][title]overlay=x=0:y=0:enable='{en_title}'[vout]"
+        )
+        cmd = ["ffmpeg","-y","-i",inp_str,
+               "-i",str(comp_png),"-i",str(top_png),"-i",str(title_png)]
     else:
         br_png = tmp/"wm_br.png"
         _make_box_png([(WM_BR_X,WM_BR_Y,WM_BR_W,WM_BR_H,BOX_RADIUS)], br_png, colour=(249,249,249,255))
-        fc = ("[1:v]format=rgba[br];[0:v][br]overlay=x=0:y=0[v1];"
-              "[2:v]format=rgba[top];"
-              f"[v1][top]overlay=x=0:y=0:enable='{en_top}'[vout]")
-        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(br_png),"-i",str(top_png)]
+        fc = (
+            "[1:v]format=rgba[br];"
+            "[0:v][br]overlay=x=0:y=0[v1];"
+            "[2:v]format=rgba[top];"
+            f"[v1][top]overlay=x=0:y=0:enable='{en_top}'[v2];"
+            "[3:v]format=rgba[title];"
+            f"[v2][title]overlay=x=0:y=0:enable='{en_title}'[vout]"
+        )
+        cmd = ["ffmpeg","-y","-i",inp_str,
+               "-i",str(br_png),"-i",str(top_png),"-i",str(title_png)]
+
     if trim_at is not None:
         cmd += ["-filter_complex",fc,"-map","[vout]","-map","0:a",
                 "-t",f"{trim_at:.2f}","-c:v","libx264","-preset","ultrafast","-crf","23",
@@ -319,6 +456,7 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
         cmd += ["-filter_complex",fc,"-map","[vout]","-map","0:a",
                 "-c:v","libx264","-preset","ultrafast","-crf","23",
                 "-c:a","aac","-b:a","128k","-ar","48000","-ac","2","-r","30","-pix_fmt","yuv420p","-shortest",out_str]
+
     _ff(cmd, timeout=max(900, int(duration*25)))
     return Path(out)
 
@@ -531,11 +669,12 @@ _check_template()
 _ensure_logo()
 
 # ──────────────────────── QUEUE HELPERS ──────────────────────────────────
-def _new_item(course_name, unit_number, orig_filename, video_bytes):
+def _new_item(course_name, unit_number, orig_filename, video_bytes, title_layout="1-line"):
     return {
         "id":            uuid.uuid4().hex[:8],
         "course_name":   course_name,
         "unit_number":   unit_number,
+        "title_layout":  title_layout,
         "orig_filename": orig_filename,
         "size_mb":       len(video_bytes) / 1048576,
         "video_bytes":   video_bytes,
@@ -561,6 +700,8 @@ def _process_item(item: dict, bar_slot, msg_slot) -> dict:
             raw.write_bytes(item["video_bytes"])
             src_res = _probe_resolution(str(raw))
 
+            title_layout = item.get("title_layout", "1-line")
+
             msg_slot.info("⏳ **1/4** — Building intro, outro, normalising…")
             bar_slot.progress(10)
 
@@ -577,10 +718,11 @@ def _process_item(item: dict, bar_slot, msg_slot) -> dict:
             if errors:
                 raise RuntimeError("; ".join(f"{k}: {v}" for k,v in errors.items()))
 
-            msg_slot.info(f"⏳ **2/4** — Replacing watermarks ({src_res[0]}×{src_res[1]})…")
+            msg_slot.info(f"⏳ **2/4** — Replacing watermarks ({src_res[0]}×{src_res[1]}, {title_layout})…")
             bar_slot.progress(40)
             norm_clean = remove_notebooklm_watermark(
                 results["norm"], tmp/"norm_clean.mp4", src_res, tmp,
+                title_layout=title_layout,
                 progress_cb=lambda s: msg_slot.info(f"⏳ **2/4** — {s}"))
 
             msg_slot.info("⏳ **3/4** — Adding 4-colour transition…")
@@ -638,6 +780,7 @@ video{border-radius:12px;border:1px solid rgba(96,204,190,.2)}
 .badge-processing{background:rgba(96,204,190,.15);color:#60ccbe;border:1px solid rgba(96,204,190,.4);padding:2px 10px;border-radius:20px;font-size:12px;font-weight:600}
 .badge-done{background:rgba(80,200,120,.15);color:#50c878;border:1px solid rgba(80,200,120,.3);padding:2px 10px;border-radius:20px;font-size:12px;font-weight:600}
 .badge-failed{background:rgba(255,80,80,.15);color:#ff5050;border:1px solid rgba(255,80,80,.3);padding:2px 10px;border-radius:20px;font-size:12px;font-weight:600}
+.layout-hint{font-size:12px;color:rgba(255,255,255,.45);margin-top:2px}
 </style>""", unsafe_allow_html=True)
 
 # ──────────────────────── HEADER ──────────────────────────────────────────
@@ -696,6 +839,49 @@ with c2:
     add_unit = st.text_input("Unit / Chapter Number", key="add_unit",
                              placeholder="e.g. UNIT 03 | CHAPTER 06")
 
+# ── Title layout selector ────────────────────────────────────────────────
+st.markdown(
+    '<p style="font-size:13px;color:rgba(255,255,255,.65);margin:4px 0 2px">'
+    '🖼 <strong>Title Layout</strong> — choose based on the NotebookLM video\'s '
+    'intro title card:</p>',
+    unsafe_allow_html=True
+)
+layout_col1, layout_col2 = st.columns(2)
+with layout_col1:
+    add_layout = st.radio(
+        "NotebookLM Title Layout",
+        options=["1-line title", "2-line title"],
+        index=0,
+        horizontal=True,
+        key="add_layout",
+        help=(
+            "**1-line title** — short course titles that fit on a single line "
+            "(e.g. 'Concepts of Health'). Uses a smaller watermark cover.\n\n"
+            "**2-line title** — longer titles that wrap to two lines "
+            "(e.g. 'Level 3 Diploma in Sports Development (RQF)'). "
+            "Uses a taller watermark cover."
+        ),
+    )
+with layout_col2:
+    # Visual hint showing the cover difference
+    layout_tag = "1-line" if "1-line" in add_layout else "2-line"
+    if layout_tag == "1-line":
+        st.markdown(
+            '<div class="layout-hint">'
+            '📐 <strong>Smaller cover</strong> — '
+            f'{WM_TITLE_1L_W}×{WM_TITLE_1L_H}px overlay on intro card'
+            '</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        st.markdown(
+            '<div class="layout-hint">'
+            '📐 <strong>Taller cover</strong> — '
+            f'{WM_TITLE_2L_W}×{WM_TITLE_2L_H}px overlay on intro card'
+            '</div>',
+            unsafe_allow_html=True
+        )
+
 add_vid = st.file_uploader("Upload NotebookLM Video", type=["mp4","mov","webm","avi","mkv"],
                            help="Up to 500 MB per file", key="add_vid")
 
@@ -717,9 +903,11 @@ with col_add:
         elif not add_vid:
             st.error("Upload a video file.")
         else:
-            item = _new_item(add_course, add_unit, add_vid.name, add_vid.getvalue())
+            layout_val = "1-line" if "1-line" in add_layout else "2-line"
+            item = _new_item(add_course, add_unit, add_vid.name, add_vid.getvalue(),
+                             title_layout=layout_val)
             st.session_state["queue"].append(item)
-            st.success(f"✅ **{add_vid.name}** added to queue ({item['size_mb']:.1f} MB)")
+            st.success(f"✅ **{add_vid.name}** added to queue ({item['size_mb']:.1f} MB, {layout_val})")
             st.rerun()
 
 st.markdown("---")
@@ -764,12 +952,17 @@ else:
         if item.get("secs"):
             size_str += f" · {item['secs']:.0f}s"
 
+        tl_badge = item.get("title_layout", "1-line")
+        tl_colour = "#60ccbe" if tl_badge == "1-line" else "#c9922a"
+
         st.markdown(f"""<div class="q-row">
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
               <span style="font-weight:700;color:rgba(255,255,255,.4);font-size:12px">#{idx+1}</span>
               {badge}
               <span style="font-weight:600;color:#fff">{item['course_name']}</span>
               <span style="color:rgba(96,204,190,.8);font-size:13px">{item['unit_number']}</span>
+              <span style="background:rgba(255,255,255,.06);border:1px solid {tl_colour};color:{tl_colour};
+                     padding:1px 8px;border-radius:12px;font-size:11px;font-weight:600">{tl_badge}</span>
               <span style="color:rgba(255,255,255,.35);font-size:12px">{item['orig_filename']} · {size_str}</span>
             </div>
         </div>""", unsafe_allow_html=True)
@@ -853,7 +1046,8 @@ else:
 
                 overall_msg.info(
                     f"**Job {job_idx+1} / {total_jobs}** — "
-                    f"{item_ref['course_name']} · {item_ref['unit_number']}"
+                    f"{item_ref['course_name']} · {item_ref['unit_number']} "
+                    f"({item_ref.get('title_layout','1-line')})"
                 )
                 overall_bar.progress((job_idx) / total_jobs,
                                      f"Processing {job_idx+1}/{total_jobs}…")
@@ -920,7 +1114,7 @@ if done_items:
     st.markdown('<div><span class="sn">3</span><span class="st">Preview Results</span></div>',
                 unsafe_allow_html=True)
     for item in done_items:
-        with st.expander(f"▶  {item['course_name']} — {item['unit_number']}", expanded=False):
+        with st.expander(f"▶  {item['course_name']} — {item['unit_number']} ({item.get('title_layout','1-line')})", expanded=False):
             st.video(item["result_data"], format="video/mp4")
             c1, c2 = st.columns(2)
             with c1:

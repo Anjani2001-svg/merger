@@ -18,6 +18,12 @@ import numpy as np
 import streamlit as st
 
 try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
+
+try:
     import msal, requests
     ONEDRIVE_AVAILABLE = True
 except ImportError:
@@ -46,10 +52,10 @@ LOGO_H            = 44
 LOGO_RIGHT_MARGIN = 113
 LOGO_BOTTOM_MARGIN = 53
 
-MS_CLIENT_ID = "772dd850-50bd-4c97-9152-d1b3e78fb737"
+MS_CLIENT_ID = st.secrets.get("MS_CLIENT_ID", "")
 MS_SCOPES    = ["https://graph.microsoft.com/Files.ReadWrite", "https://graph.microsoft.com/User.Read"]
-ONEDRIVE_FOLDER_URL = "https://globaledulinkuk-my.sharepoint.com/:f:/g/personal/content_gamification_imperiallearning_co_uk/IgDpo-qQQhSNS5aOw2lBAFo-ASQb3KWLDkHS9kp6sIHuy0s?e=3Ualc4"
-MS_AUTHORITY = "https://login.microsoftonline.com/globaledulinkuk.onmicrosoft.com"
+ONEDRIVE_FOLDER_URL = st.secrets.get("ONEDRIVE_FOLDER_URL", "")
+MS_AUTHORITY = st.secrets.get("MS_AUTHORITY", "https://login.microsoftonline.com/common")
 
 TEAL, WHITE = (96, 204, 190), (255, 255, 255)
 
@@ -186,22 +192,195 @@ def _has_audio(path):
     return bool(r.stdout.strip())
 
 
-def _detect_end_card_start(path):
-    total = _probe_duration(path); t = max(0.0, total-20.0)
-    while t < total-1.0:
-        fd, tf = tempfile.mkstemp(suffix=".jpg"); os.close(fd)
+def _detect_end_card_start(path, progress_cb=None):
+    """Detect where the NotebookLM end card begins using OpenCV template matching.
+
+    Returns the trim timestamp, or the full duration if no end card is found.
+    """
+    total = _probe_duration(path)
+
+    def _grab_cv(t):
+        """Extract frame at *t* as a 640×360 BGR OpenCV image (or None)."""
+        fd, tf = tempfile.mkstemp(suffix=".png"); os.close(fd)
         try:
-            subprocess.run(["ffmpeg","-y","-ss",f"{t:.2f}","-i",str(path),
-                "-vframes","1",tf], capture_output=True, timeout=8)
-            a = np.array(Image.open(tf))
-            if (a.mean(axis=2)>230).sum()/(a.shape[0]*a.shape[1]) > 0.95:
-                return t
-        except: pass
+            subprocess.run(
+                ["ffmpeg", "-y", "-ss", f"{t:.2f}", "-i", str(path),
+                 "-vframes", "1", "-s", "640x360", tf],
+                capture_output=True, timeout=10)
+            if os.path.getsize(tf) < 100:
+                return None
+            if CV2_AVAILABLE:
+                return cv2.imread(tf)
+            else:
+                return np.asarray(Image.open(tf).convert("L"), dtype=np.float32)
+        except Exception:
+            return None
         finally:
             try: os.unlink(tf)
-            except: pass
-        t += 0.5
-    return max(0.0, total-9.0)
+            except OSError: pass
+
+    def _score_frame(frame):
+        """Return template-match score (0..1) for *frame*, or -1."""
+        if frame is None:
+            return -1.0
+        if CV2_AVAILABLE:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+            try:
+                res = cv2.matchTemplate(gray, template_gray, cv2.TM_CCOEFF_NORMED)
+                _, mx, _, _ = cv2.minMaxLoc(res)
+                return float(mx)
+            except cv2.error:
+                return -1.0
+        else:
+            crop = frame[cy1:cy2, cx1:cx2]
+            if crop.shape != template_gray.shape:
+                return -1.0
+            diff = float(np.mean(np.abs(crop.astype(float) - template_gray.astype(float))))
+            return max(0.0, 1.0 - diff / 50.0)
+
+    HARD_THRESH  = 0.70   # definite end-card match
+    SOFT_THRESH  = 0.35   # transition / fade-in region
+
+    if progress_cb: progress_cb("   Capturing end-card reference…")
+
+    # ── Get the last READABLE frame ─────────────────────────────────────
+    end_frame = None
+    for offset in [1.0, 2.0, 3.0, 5.0]:
+        t_try = max(0.0, total - offset)
+        end_frame = _grab_cv(t_try)
+        if end_frame is not None:
+            if progress_cb: progress_cb(f"   End frame captured at t={t_try:.1f}s")
+            break
+    if end_frame is None:
+        if progress_cb: progress_cb("   Cannot read any frame near the end")
+        return total
+
+    # Content reference from 40 % of video
+    content_frame = _grab_cv(total * 0.40)
+
+    # ── Extract centre 60 % crop as template ────────────────────────────
+    h, w = end_frame.shape[:2]
+    cx1, cy1 = int(w * 0.20), int(h * 0.20)
+    cx2, cy2 = int(w * 0.80), int(h * 0.80)
+    template = end_frame[cy1:cy2, cx1:cx2]
+
+    if CV2_AVAILABLE:
+        template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+    else:
+        template_gray = template
+
+    # ── Safety checks ───────────────────────────────────────────────────
+    end_score = _score_frame(end_frame)
+    if end_score < HARD_THRESH:
+        if progress_cb: progress_cb(f"   End frame score {end_score:.2f} — not an end card")
+        return total
+
+    if content_frame is not None and _score_frame(content_frame) >= HARD_THRESH:
+        if progress_cb: progress_cb("   Content matches end-card template — skipping trim")
+        return total
+
+    if progress_cb: progress_cb("   End-card confirmed. Scanning backward…")
+
+    # ── Phase 1 — coarse backward scan (1 s steps, hard threshold) ─────
+    scan_limit = max(0.0, total - 60.0)
+    boundary = total
+    t = total - 1.0
+    while t > scan_limit:
+        frame = _grab_cv(t)
+        if frame is not None and _score_frame(frame) >= HARD_THRESH:
+            boundary = t
+            t -= 1.0
+        else:
+            break
+
+    # ── Phase 2 — fine forward scan (0.1 s steps) to find precise edge ─
+    fine_start = max(scan_limit, boundary - 2.0)
+    fine_end   = min(total, boundary + 1.0)
+    precise    = boundary
+    t = fine_start
+    while t <= fine_end:
+        frame = _grab_cv(t)
+        sc = _score_frame(frame)
+        if sc >= HARD_THRESH:
+            precise = t
+            break
+        t += 0.10
+
+    # ── Phase 3 — walk backward in 0.10 s steps (hard threshold) ───────
+    t = precise - 0.10
+    while t > scan_limit:
+        frame = _grab_cv(t)
+        sc = _score_frame(frame)
+        if sc >= HARD_THRESH:
+            precise = t
+            t -= 0.10
+        else:
+            break
+
+    # ── Phase 4 — detect transition zone (soft threshold) ──────────────
+    # The end card often fades in over 0.3-0.5 s before the hard match.
+    # Walk further back with the lower threshold to catch that.
+    transition_start = precise
+    t = precise - 0.10
+    while t > scan_limit:
+        frame = _grab_cv(t)
+        sc = _score_frame(frame)
+        if sc >= SOFT_THRESH:
+            transition_start = t
+            t -= 0.10
+        else:
+            break
+
+    # Use the transition start (catches the fade-in)
+    precise = transition_start
+
+    # ── Phase 5 — content-divergence detection ──────────────────────────
+    # The transition often starts with a white flash / dissolve BEFORE the
+    # end-card template fades in.  These frames score low on the template
+    # but look nothing like the preceding content.  Compare each frame
+    # against a confirmed-content reference; if the pixel diff is abnormally
+    # high, the frame is still part of the transition.
+    content_ref_t = max(0.0, precise - 5.0)
+    content_ref = _grab_cv(content_ref_t)
+    if content_ref is not None:
+        if CV2_AVAILABLE:
+            ref_gray = cv2.cvtColor(content_ref, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        else:
+            ref_gray = content_ref.astype(np.float32)
+
+        def _content_diff(frame):
+            if frame is None:
+                return 0.0
+            if CV2_AVAILABLE:
+                g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
+            else:
+                g = frame.astype(np.float32)
+            return float(np.mean(np.abs(g - ref_gray)))
+
+        # Measure baseline diff — sample a frame right next to the reference
+        baseline_diff = _content_diff(_grab_cv(content_ref_t + 1.0))
+        # Threshold: anything more than 4× the baseline (or > 3.0 absolute)
+        # is a diverged frame (transition / flash)
+        diff_thresh = max(3.0, baseline_diff * 4.0)
+
+        t = precise - 0.10
+        while t > scan_limit:
+            frame = _grab_cv(t)
+            d = _content_diff(frame)
+            if d > diff_thresh:
+                precise = t
+                t -= 0.10
+            else:
+                break
+
+    ec_len = total - precise
+    if ec_len < 0.5:
+        if progress_cb: progress_cb(f"   End card {ec_len:.2f}s — too short, skipping")
+        return total
+
+    if progress_cb:
+        progress_cb(f"   End card: {precise:.1f}s → {total:.1f}s  ({ec_len:.1f}s)")
+    return precise
 
 
 def make_intro(course, unit_num, unit_title, tmp):
@@ -240,14 +419,102 @@ def normalise(inp, out):
     cmd += [str(out)]; _ff(cmd); return Path(out)
 
 
-def _detect_top_watermark_end(path, max_scan=120.0):
+def _detect_notebooklm_logo_cv(video_path, progress_cb=None):
+    """Use OpenCV to detect the NotebookLM logo on the front page.
+    Extracts the bottom-right logo from a middle frame as a template,
+    then searches the front page (top half) for the same logo via
+    multi-scale template matching.
+    Returns (x, y, w, h) in 1920x1080 coordinates, or None.
+    """
+    if not CV2_AVAILABLE:
+        if progress_cb: progress_cb("OpenCV not available")
+        return None
+    try:
+        duration = _probe_duration(str(video_path))
+    except Exception:
+        return None
+
+    mid_t = min(duration * 0.3, max(5.0, duration - 10))
+    fd1, tf_mid = tempfile.mkstemp(suffix=".png"); os.close(fd1)
+    fd2, tf_front = tempfile.mkstemp(suffix=".png"); os.close(fd2)
+    try:
+        subprocess.run(["ffmpeg","-y","-ss",f"{mid_t:.2f}","-i",str(video_path),
+                        "-vframes","1",tf_mid], capture_output=True, timeout=10)
+        subprocess.run(["ffmpeg","-y","-ss","0.5","-i",str(video_path),
+                        "-vframes","1",tf_front], capture_output=True, timeout=10)
+        mid_img = cv2.imread(tf_mid)
+        front_img = cv2.imread(tf_front)
+        if mid_img is None or front_img is None:
+            return None
+
+        fh, fw = front_img.shape[:2]
+        mh, mw = mid_img.shape[:2]
+
+        # --- Step 1: extract bottom-right logo from middle frame as template ---
+        sx_m, sy_m = mw / 1920, mh / 1080
+        bx = max(0, int(WM_BR_X * sx_m)); by = max(0, int(WM_BR_Y * sy_m))
+        bw = min(int(WM_BR_W * sx_m), mw - bx)
+        bh = min(int(WM_BR_H * sy_m), mh - by)
+        template = mid_img[by:by+bh, bx:bx+bw]
+        if template.size == 0:
+            return None
+
+        # --- Step 2: multi-scale template matching on front page top half ---
+        search_h = int(fh * 0.50)
+        search_region = front_img[0:search_h, :]
+        gray_region = cv2.cvtColor(search_region, cv2.COLOR_BGR2GRAY)
+        gray_tmpl  = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        th, tw = gray_tmpl.shape[:2]
+
+        best_match = None
+        best_val   = 0.50
+
+        for scale in np.arange(0.5, 1.6, 0.1):
+            sw = int(tw * scale); sh = int(th * scale)
+            if sw >= search_region.shape[1] or sh >= search_region.shape[0] or sw < 10 or sh < 10:
+                continue
+            scaled_tmpl = cv2.resize(gray_tmpl, (sw, sh))
+            res = cv2.matchTemplate(gray_region, scaled_tmpl, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(res)
+            if max_val > best_val:
+                best_val = max_val
+                best_match = (max_loc[0], max_loc[1], sw, sh)
+
+        if best_match:
+            sx_f, sy_f = 1920 / fw, 1080 / fh
+            pad = 8
+            rx = max(0, int((best_match[0] - pad) * sx_f))
+            ry = max(0, int((best_match[1] - pad) * sy_f))
+            rw = int((best_match[2] + pad * 2) * sx_f)
+            rh = int((best_match[3] + pad * 2) * sy_f)
+            if progress_cb: progress_cb(f"   CV match at ({rx},{ry}) {rw}x{rh}  conf={best_val:.2f}")
+            return (rx, ry, rw, rh)
+
+        return None
+
+    except Exception as e:
+        if progress_cb: progress_cb(f"   CV detection error: {e}")
+        return None
+    finally:
+        try: os.unlink(tf_mid)
+        except: pass
+        try: os.unlink(tf_front)
+        except: pass
+
+
+def _detect_top_watermark_end(path, max_scan=120.0, badge_box=None):
     try:
         src_w, src_h = _probe_resolution(path)
     except Exception:
         src_w, src_h = 1920, 1080
     sx = src_w / 1920; sy = src_h / 1080
-    rx = max(0, int(WM_TOP_X * sx)); ry = max(0, int(WM_TOP_Y * sy))
-    rw = max(1, int(WM_TOP_W * sx)); rh = max(1, int(WM_TOP_H * sy))
+    if badge_box:
+        bb_x, bb_y, bb_w, bb_h = badge_box
+        rx = max(0, int(bb_x * sx)); ry = max(0, int(bb_y * sy))
+        rw = max(1, int(bb_w * sx)); rh = max(1, int(bb_h * sy))
+    else:
+        rx = max(0, int(WM_TOP_X * sx)); ry = max(0, int(WM_TOP_Y * sy))
+        rw = max(1, int(WM_TOP_W * sx)); rh = max(1, int(WM_TOP_H * sy))
 
     def _grab_region(t):
         fd, tf = tempfile.mkstemp(suffix=".jpg"); os.close(fd)
@@ -280,22 +547,38 @@ def _detect_top_watermark_end(path, max_scan=120.0):
 def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None):
     inp_str, out_str = str(inp), str(out)
     if progress_cb: progress_cb("Detecting end-card start time…")
-    ecs = _detect_end_card_start(inp_str); duration = _probe_duration(inp_str)
+    ecs = _detect_end_card_start(inp_str, progress_cb=progress_cb)
+    duration = _probe_duration(inp_str)
+    # The detector returns `duration` when no end card is found.
+    # Any value less than that means a genuine end card was detected.
     trim_at = None
-    if ecs < duration - 2.0:
+    if ecs < duration - 0.3:
         trim_at = ecs
-        if progress_cb: progress_cb(f"✂️ Trimming end card at {ecs:.1f}s…")
-    use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
-    if progress_cb: progress_cb("Detecting top watermark duration…")
-    top_end = _detect_top_watermark_end(inp_str)
-    top_png = tmp / "wm_top.png"
-    if top_end > 0.5:
-        if progress_cb: progress_cb(f"   Badge visible until ~{top_end:.1f}s")
-        _make_box_png([(WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H, BOX_RADIUS)],
-                      top_png, colour=(249, 249, 249, 255))
-        use_top = True; en_top = f"lte(t\\,{top_end:.2f})"
+        if progress_cb: progress_cb(f"✂️ Trimming end card at {trim_at:.1f}s  ({duration - trim_at:.1f}s removed)")
     else:
-        if progress_cb: progress_cb("   No top badge detected — skipping")
+        if progress_cb: progress_cb("   No end card to trim")
+    use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
+
+    # --- OpenCV logo detection for front-page badge ---
+    if progress_cb: progress_cb("Detecting front-page logo with OpenCV…")
+    cv_badge = _detect_notebooklm_logo_cv(inp_str, progress_cb=progress_cb)
+    top_png = tmp / "wm_top.png"
+    if cv_badge:
+        badge_x, badge_y, badge_w, badge_h = cv_badge
+        if progress_cb: progress_cb(f"   CV detected badge at ({badge_x},{badge_y}) {badge_w}x{badge_h}")
+        if progress_cb: progress_cb("Detecting top watermark duration…")
+        top_end = _detect_top_watermark_end(inp_str, badge_box=(badge_x, badge_y, badge_w, badge_h))
+        if top_end > 0.5:
+            if progress_cb: progress_cb(f"   Badge visible until ~{top_end:.1f}s")
+            _make_box_png([(badge_x, badge_y, badge_w, badge_h, BOX_RADIUS)],
+                          top_png, colour=(249, 249, 249, 255))
+            use_top = True; en_top = f"lte(t\\,{top_end:.2f})"
+        else:
+            if progress_cb: progress_cb("   Badge not visible long enough — skipping")
+            Image.new("RGBA", (1920, 1080), (0,0,0,0)).save(str(top_png), "PNG")
+            use_top = False; en_top = "0"
+    else:
+        if progress_cb: progress_cb("   No front-page badge detected — skipping")
         Image.new("RGBA", (1920, 1080), (0,0,0,0)).save(str(top_png), "PNG")
         use_top = False; en_top = "0"
     if use_logo:
@@ -569,10 +852,13 @@ def _process_item(item: dict, bar_slot, msg_slot) -> dict:
                 try:    results[name] = fn(*args)
                 except Exception as e: errors[name] = e
 
-            with ThreadPoolExecutor(max_workers=3) as pool:
-                pool.submit(_job, "intro", make_intro, item["course_name"], item["unit_number"], "", tmp)
-                pool.submit(_job, "outro", make_outro, tmp)
-                pool.submit(_job, "norm",  normalise,  raw, tmp/"norm.mp4")
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                # normalise runs in background (longest step)
+                pool.submit(_job, "norm", normalise, raw, tmp/"norm.mp4")
+                # intro & outro share INTRO_TPL — run sequentially to
+                # avoid concurrent FFmpeg reads that fail on Windows
+                _job("intro", make_intro, item["course_name"], item["unit_number"], "", tmp)
+                _job("outro", make_outro, tmp)
 
             if errors:
                 raise RuntimeError("; ".join(f"{k}: {v}" for k,v in errors.items()))

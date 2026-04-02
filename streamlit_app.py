@@ -30,7 +30,7 @@ except ImportError:
     ONEDRIVE_AVAILABLE = False
 
 # ── Embedded SLC logo (base64) — written to assets/ on startup ───────────
-_SLC_LOGO_B64 = "iVBORw0KGgoAAAANSUhEUgAAAHcAAABNCAYAAACc2PtBAAAtpElEQVR4nO29WY8kyZXv9ztm5mvsuWctXc1ukk1OX1KjucQVpAcBepAAfWJ9AAkC9HAx94ozHK69VFdlVVbusftiZnpwN0/PrC2bPcTVDHmAzIjwcHeLsGNn/x8LqWpHn4QPvwbAK7wAqNvz/DvO618iqvfKIR4Qh/LgpHded/67jzefCVT/ADT3e+e4vVF7z5VX773m3wupj5/yDpIPM/L7DPs+xvbJ37lG4e9d9zd6N5kfdvktkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRAAAAA="
+_SLC_LOGO_B64 = "iVBORw0KGgoAAAANSUhEUgAAAHcAAABNCAYAAACc2PtBAAAtpElEQVR4nO29WY8lyZXv9ztm5mvsuWctXc1ukk1OX1KjucQVpAcBepAAfWJ9AAkC9HAx94ozHK69VFdlVVbusftiZnpwN0/PrC2bPcTVDHmAzIjwcHeLsGNn/x8LqWpHn4QPvwbAK7wAqNvz/DvO618iqvfKIR4Qh/LgpHded/67jzefCVT/ADT3e+e4vVF7z5VX773m3wupj5/yDpIPM/L7DPs+xvbJ37lG4e9d9zd6N5kfdvktkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRAAAAA="
 
 st.set_page_config(page_title="SLC Video Merger", page_icon="🎬", layout="wide")
 
@@ -58,6 +58,9 @@ ONEDRIVE_FOLDER_URL = st.secrets.get("ONEDRIVE_FOLDER_URL", "")
 MS_AUTHORITY = st.secrets.get("MS_AUTHORITY", "https://login.microsoftonline.com/common")
 
 TEAL, WHITE = (96, 204, 190), (255, 255, 255)
+
+# ── Folder rotation config ────────────────────────────────────────────────
+FOLDER_MAX_ITEMS = 50   # create a new batch folder after this many files
 
 
 def _font(name):
@@ -200,7 +203,7 @@ def _detect_end_card_start(path, progress_cb=None):
     total = _probe_duration(path)
 
     def _grab_cv(t):
-        """Extract frame at *t* as a 640×360 BGR OpenCV image (or None)."""
+        """Extract frame at *t* as a 640x360 BGR OpenCV image (or None)."""
         fd, tf = tempfile.mkstemp(suffix=".png"); os.close(fd)
         try:
             subprocess.run(
@@ -359,7 +362,7 @@ def _detect_end_card_start(path, progress_cb=None):
 
         # Measure baseline diff — sample a frame right next to the reference
         baseline_diff = _content_diff(_grab_cv(content_ref_t + 1.0))
-        # Threshold: anything more than 4× the baseline (or > 3.0 absolute)
+        # Threshold: anything more than 4x the baseline (or > 3.0 absolute)
         # is a diverged frame (transition / flash)
         diff_thresh = max(3.0, baseline_diff * 4.0)
 
@@ -719,6 +722,131 @@ def _complete_device_flow():
     return False, err
 
 
+# ──────────────────── FOLDER ROTATION HELPERS ────────────────────────────
+def _count_folder_items(drive_prefix, folder_id, token):
+    """Return the number of child items (files) in a OneDrive folder.
+
+    Uses the /children endpoint with $count and pagination to handle
+    folders with many items.
+    """
+    h = {"Authorization": f"Bearer {token}"}
+    url = (f"https://graph.microsoft.com/v1.0/{drive_prefix}/items/{folder_id}"
+           f"/children?$top=200&$select=id")
+    total = 0
+    while url:
+        r = requests.get(url, headers=h, timeout=30)
+        if r.status_code != 200:
+            return total  # best-effort — if the call fails, assume 0
+        data = r.json()
+        total += len(data.get("value", []))
+        url = data.get("@odata.nextLink")
+    return total
+
+
+def _list_batch_subfolders(drive_prefix, folder_id, token):
+    """Return a sorted list of (batch_number, folder_id, name) for existing
+    'Batch N' subfolders inside the given parent folder.
+    """
+    h = {"Authorization": f"Bearer {token}"}
+    url = (f"https://graph.microsoft.com/v1.0/{drive_prefix}/items/{folder_id}"
+           f"/children?$filter=folder ne null&$select=id,name,folder&$top=200")
+    batches = []
+    while url:
+        r = requests.get(url, headers=h, timeout=30)
+        if r.status_code != 200:
+            break
+        data = r.json()
+        for item in data.get("value", []):
+            name = item.get("name", "")
+            # Match "Batch 1", "Batch 2", etc.
+            if name.startswith("Batch "):
+                try:
+                    num = int(name.split("Batch ", 1)[1])
+                    batches.append((num, item["id"], name))
+                except (ValueError, IndexError):
+                    pass
+        url = data.get("@odata.nextLink")
+    batches.sort(key=lambda x: x[0])
+    return batches
+
+
+def _create_subfolder(drive_prefix, parent_id, folder_name, token):
+    """Create a subfolder and return its item ID, or None on failure."""
+    h = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    url = f"https://graph.microsoft.com/v1.0/{drive_prefix}/items/{parent_id}/children"
+    body = {
+        "name": folder_name,
+        "folder": {},
+        "@microsoft.graph.conflictBehavior": "fail",
+    }
+    r = requests.post(url, headers=h, json=body, timeout=30)
+    if r.status_code in (200, 201):
+        return r.json().get("id")
+    return None
+
+
+def _resolve_upload_folder(drive_prefix, root_folder_id, token, status_cb=None):
+    """Determine the correct folder to upload into, applying the 100-item
+    rotation rule.
+
+    Logic:
+      1. Count files in the root folder (excluding Batch subfolders).
+      2. If < FOLDER_MAX_ITEMS and no Batch subfolders exist, use root.
+      3. Otherwise, find the highest-numbered Batch subfolder.
+         - If it has < FOLDER_MAX_ITEMS files, use it.
+         - Otherwise, create the next Batch subfolder.
+      4. If root has >= FOLDER_MAX_ITEMS but no Batch folders yet,
+         create "Batch 1".
+
+    Returns (target_drive_prefix, target_folder_id, folder_display_name).
+    """
+    def _cb(s):
+        if status_cb: status_cb(s)
+
+    _cb("📂 Checking folder capacity…")
+
+    batches = _list_batch_subfolders(drive_prefix, root_folder_id, token)
+    root_count = _count_folder_items(drive_prefix, root_folder_id, token)
+    # Subtract the Batch subfolders themselves from the root count
+    file_count_in_root = max(0, root_count - len(batches))
+
+    _cb(f"   Root folder: {file_count_in_root} file(s), {len(batches)} batch subfolder(s)")
+
+    # Case 1: root not full and no batch folders exist — upload to root
+    if file_count_in_root < FOLDER_MAX_ITEMS and len(batches) == 0:
+        remaining = FOLDER_MAX_ITEMS - file_count_in_root
+        _cb(f"   ✅ Using root folder ({remaining} slot(s) remaining)")
+        return drive_prefix, root_folder_id, "root"
+
+    # Case 2: batch folders exist — check the latest one
+    if batches:
+        latest_num, latest_id, latest_name = batches[-1]
+        latest_count = _count_folder_items(drive_prefix, latest_id, token)
+        _cb(f"   Latest batch: '{latest_name}' with {latest_count} file(s)")
+
+        if latest_count < FOLDER_MAX_ITEMS:
+            remaining = FOLDER_MAX_ITEMS - latest_count
+            _cb(f"   ✅ Using '{latest_name}' ({remaining} slot(s) remaining)")
+            return drive_prefix, latest_id, latest_name
+
+        # Latest batch is full — create the next one
+        next_num = latest_num + 1
+    else:
+        # Root is full but no batch folders yet — start at Batch 1
+        next_num = 1
+
+    new_name = f"Batch {next_num}"
+    _cb(f"   📁 Creating '{new_name}'…")
+    new_id = _create_subfolder(drive_prefix, root_folder_id, new_name, token)
+    if new_id:
+        _cb(f"   ✅ Created '{new_name}' — uploading there")
+        return drive_prefix, new_id, new_name
+    else:
+        # Fallback: if folder creation fails, try uploading to root anyway
+        _cb(f"   ⚠️ Could not create '{new_name}' — falling back to root folder")
+        return drive_prefix, root_folder_id, "root (fallback)"
+
+
 def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, status_cb=None, **kwargs):
     h = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     def _cb(s):
@@ -754,6 +882,12 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, s
                 _cb(f"✅ Found: '{item['name']}'")
     if not folder_id:
         return False, (f"❌ Folder '{folder_name}' not found. Paste the folder URL above.")
+
+    # ── FOLDER ROTATION — pick the right subfolder ────────────────────────
+    drive_prefix, folder_id, folder_label = _resolve_upload_folder(
+        drive_prefix, folder_id, token, status_cb=status_cb
+    )
+
     _cb("⬆️ Creating upload session…")
     safe_name = filename.replace(" ","_")
     if folder_id and drive_prefix != "me/drive":
@@ -782,7 +916,7 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, s
         chunk = data[uploaded:uploaded+CHUNK]; chunk_end = uploaded+len(chunk)-1
         pct = int(uploaded/total*100)
         if pct//10 != last_pct//10:
-            _cb(f"⬆️ Uploading… {pct}% ({uploaded//1048576} / {total//1048576} MB)")
+            _cb(f"⬆️ Uploading to {folder_label}… {pct}% ({uploaded//1048576} / {total//1048576} MB)")
             last_pct = pct
         r3 = requests.put(upload_url, data=chunk, timeout=180,
                           headers={"Content-Length":str(len(chunk)),"Content-Range":f"bytes {uploaded}-{chunk_end}/{total}","Content-Type":"video/mp4"})
@@ -792,7 +926,7 @@ def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, s
         elif r3.status_code == 202: pass
         else: return False, f"Upload failed at byte {uploaded} (HTTP {r3.status_code})"
         uploaded += len(chunk)
-    _cb(f"✅ Upload complete! ({total//1048576} MB)")
+    _cb(f"✅ Upload complete to '{folder_label}'! ({total//1048576} MB)")
     return True, file_web_url or "https://onedrive.live.com"
 
 
@@ -945,6 +1079,7 @@ if ONEDRIVE_AVAILABLE:
     with st.expander("☁  OneDrive Connection", expanded=not bool(_token)):
         if _token:
             st.success("✅ Connected — processed videos can be uploaded to the department folder.")
+            st.caption(f"📂 Auto-rotation enabled: new subfolder every {FOLDER_MAX_ITEMS} videos")
             if st.button("🔄 Switch / Re-connect", type="secondary", key="od_reset"):
                 TOKEN_CACHE_FILE.unlink(missing_ok=True)
                 st.session_state.pop("ms_flow", None); st.session_state.pop("ms_cache", None)

@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """
-SLC Video Merger – Streamlit Edition  (Queue build)
+SLC Video Merger – Streamlit Edition  (Queue build, Google Drive)
 All text is rendered by Pillow (no FFmpeg drawtext = no escaping bugs).
 FFmpeg only does: overlay PNG on video, normalise, transitions, concatenate.
 
-OneDrive upload uses Microsoft OAuth2 (device-code flow).
-No app registration key needed — just a Client ID from Azure.
+Google Drive upload uses a service account.
+Setup:
+  1. Create a service account in Google Cloud Console, enable Drive API,
+     download the JSON key.
+  2. Paste the JSON key contents into st.secrets["GCP_SERVICE_ACCOUNT"]
+     (as a dict / TOML table).
+  3. In Google Drive, share the target folder with the service account's
+     client_email (give it Editor access).
+  4. Put the folder ID in st.secrets["GDRIVE_FOLDER_ID"] (the long string
+     after /folders/ in the folder URL).
 """
 
 import os, json, subprocess, tempfile, time, uuid
@@ -24,21 +32,22 @@ except ImportError:
     CV2_AVAILABLE = False
 
 try:
-    import msal, requests
-    ONEDRIVE_AVAILABLE = True
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseUpload
+    from googleapiclient.errors import HttpError
+    GDRIVE_AVAILABLE = True
 except ImportError:
-    ONEDRIVE_AVAILABLE = False
+    GDRIVE_AVAILABLE = False
 
 # ── Embedded SLC logo (base64) — written to assets/ on startup ───────────
-_SLC_LOGO_B64 = "iVBORw0KGgoAAAANSUhEUgAAAHcAAABNCAYAAACc2PtBAAAtpElEQVR4nO29WY8lyZXv9ztm5mvsuWctXc1ukk1OX1KjucQVpAcBepAAfWJ9AAkC9HAx94ozHK69VFdlVVbusftiZnpwN0/PrC2bPcTVDHmAzIjwcHeLsGNn/x8LqWpHn4QPvwbAK7wAqNvz/DvO618iqvfKIR4Qh/LgpHded/67jzefCVT/ADT3e+e4vVF7z5VX773m3wupj5/yDpIPM/L7DPs+xvbJ37lG4e9d9zd6N5kfdvktkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRxE1qIFzwC7Z+Tvjus6NvN22t6N265GI69/1F793yburetkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRAAAAA="
+_SLC_LOGO_B64 = "iVBORw0KGgoAAAANSUhEUgAAAHcAAABNCAYAAACc2PtBAAAtpElEQVR4nO29WY8lyZXv9ztm5mvsuWctXc1ukk1OX1KjucQVpAcBepAAfWJ9AAkC9HAx94ozHK69VFdlVVbusftiZnpwN0/PrC2bPcTVDHmAzIjwcHeLsGNn/x8LqWpHn4QPvwbAK7wAqNvz/DvO618iqvfKIR4Qh/LgpHded/67jzefCVT/ADT3e+e4vVF7z5VX773m3wupj5/yDpIPM/L7DPs+xvbJ37lG4e9d9zd6N5kfdvktkwNDgjTcldTbE5oH34jfvbV1n6lBOptRbpnb/H/YAhN/e9++tP97l1r4gcy9z4z+RPYZ30zkXbV8/9r3D6J6V/YYLHfH+BD9NTDyXdQx9522FfDthPbf97Q2sX+iuG7q+5MpuLvy2dpYj3qnalX+3ZbirVPfWjCB3Fvn37HPvnnT8fbi/PdGP1At39LbTHHvdHxoj3luFexb9C4G9zkh4eqPS243/v3Hf+eMBTDvk9j75O8xQflWIltG9L3nO2r4jpvrOsm5le53M/Itp+rOa6FbHm85d3fHda1H/tdIf560HC729FRAAAAA="
 
 st.set_page_config(page_title="SLC Video Merger", page_icon="🎬", layout="wide")
 
 BASE_DIR  = Path(__file__).parent
 INTRO_TPL = BASE_DIR / "assets" / "intro_template.mp4"
 SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
-
-TOKEN_CACHE_FILE = Path("/tmp/ms_token_cache.json")
 
 # ── Watermark / badge cover ───────────────────────────────────────────────
 WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1655, 960, 240, 72
@@ -52,10 +61,9 @@ LOGO_H            = 44
 LOGO_RIGHT_MARGIN = 113
 LOGO_BOTTOM_MARGIN = 53
 
-MS_CLIENT_ID = st.secrets.get("MS_CLIENT_ID", "")
-MS_SCOPES    = ["https://graph.microsoft.com/Files.ReadWrite", "https://graph.microsoft.com/User.Read"]
-ONEDRIVE_FOLDER_URL = st.secrets.get("ONEDRIVE_FOLDER_URL", "")
-MS_AUTHORITY = st.secrets.get("MS_AUTHORITY", "https://login.microsoftonline.com/common")
+# ── Google Drive config ───────────────────────────────────────────────────
+GDRIVE_FOLDER_ID = st.secrets.get("GDRIVE_FOLDER_ID", "")
+GDRIVE_SCOPES    = ["https://www.googleapis.com/auth/drive"]
 
 TEAL, WHITE = (96, 204, 190), (255, 255, 255)
 
@@ -321,8 +329,6 @@ def _detect_end_card_start(path, progress_cb=None):
             break
 
     # ── Phase 4 — detect transition zone (soft threshold) ──────────────
-    # The end card often fades in over 0.3-0.5 s before the hard match.
-    # Walk further back with the lower threshold to catch that.
     transition_start = precise
     t = precise - 0.10
     while t > scan_limit:
@@ -334,15 +340,9 @@ def _detect_end_card_start(path, progress_cb=None):
         else:
             break
 
-    # Use the transition start (catches the fade-in)
     precise = transition_start
 
     # ── Phase 5 — content-divergence detection ──────────────────────────
-    # The transition often starts with a white flash / dissolve BEFORE the
-    # end-card template fades in.  These frames score low on the template
-    # but look nothing like the preceding content.  Compare each frame
-    # against a confirmed-content reference; if the pixel diff is abnormally
-    # high, the frame is still part of the transition.
     content_ref_t = max(0.0, precise - 5.0)
     content_ref = _grab_cv(content_ref_t)
     if content_ref is not None:
@@ -360,10 +360,7 @@ def _detect_end_card_start(path, progress_cb=None):
                 g = frame.astype(np.float32)
             return float(np.mean(np.abs(g - ref_gray)))
 
-        # Measure baseline diff — sample a frame right next to the reference
         baseline_diff = _content_diff(_grab_cv(content_ref_t + 1.0))
-        # Threshold: anything more than 4x the baseline (or > 3.0 absolute)
-        # is a diverged frame (transition / flash)
         diff_thresh = max(3.0, baseline_diff * 4.0)
 
         t = precise - 0.10
@@ -423,12 +420,7 @@ def normalise(inp, out):
 
 
 def _detect_notebooklm_logo_cv(video_path, progress_cb=None):
-    """Use OpenCV to detect the NotebookLM logo on the front page.
-    Extracts the bottom-right logo from a middle frame as a template,
-    then searches the front page (top half) for the same logo via
-    multi-scale template matching.
-    Returns (x, y, w, h) in 1920x1080 coordinates, or None.
-    """
+    """Use OpenCV to detect the NotebookLM logo on the front page."""
     if not CV2_AVAILABLE:
         if progress_cb: progress_cb("OpenCV not available")
         return None
@@ -453,7 +445,6 @@ def _detect_notebooklm_logo_cv(video_path, progress_cb=None):
         fh, fw = front_img.shape[:2]
         mh, mw = mid_img.shape[:2]
 
-        # --- Step 1: extract bottom-right logo from middle frame as template ---
         sx_m, sy_m = mw / 1920, mh / 1080
         bx = max(0, int(WM_BR_X * sx_m)); by = max(0, int(WM_BR_Y * sy_m))
         bw = min(int(WM_BR_W * sx_m), mw - bx)
@@ -462,7 +453,6 @@ def _detect_notebooklm_logo_cv(video_path, progress_cb=None):
         if template.size == 0:
             return None
 
-        # --- Step 2: multi-scale template matching on front page top half ---
         search_h = int(fh * 0.50)
         search_region = front_img[0:search_h, :]
         gray_region = cv2.cvtColor(search_region, cv2.COLOR_BGR2GRAY)
@@ -552,8 +542,6 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
     if progress_cb: progress_cb("Detecting end-card start time…")
     ecs = _detect_end_card_start(inp_str, progress_cb=progress_cb)
     duration = _probe_duration(inp_str)
-    # The detector returns `duration` when no end card is found.
-    # Any value less than that means a genuine end card was detected.
     trim_at = None
     if ecs < duration - 0.3:
         trim_at = ecs
@@ -562,7 +550,6 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
         if progress_cb: progress_cb("   No end card to trim")
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
-    # --- OpenCV logo detection for front-page badge ---
     if progress_cb: progress_cb("Detecting front-page logo with OpenCV…")
     cv_badge = _detect_notebooklm_logo_cv(inp_str, progress_cb=progress_cb)
     top_png = tmp / "wm_top.png"
@@ -664,151 +651,114 @@ def preview_frame(course, unit_num, unit_title):
     return buf
 
 
-# ──────────────────── ONEDRIVE OAUTH2 ────────────────────────────────────
-def _get_token_cache():
-    cache = msal.SerializableTokenCache()
-    if TOKEN_CACHE_FILE.exists():
-        try: cache.deserialize(TOKEN_CACHE_FILE.read_text()); return cache
-        except Exception: pass
-    if st.session_state.get("_ms_token_cache"):
-        try: cache.deserialize(st.session_state["_ms_token_cache"])
-        except Exception: pass
-    return cache
+# ──────────────────── GOOGLE DRIVE (SERVICE ACCOUNT) ─────────────────────
+@st.cache_resource
+def _get_drive_service():
+    """Build a Google Drive API service from the service-account secret.
 
-
-def _save_token_cache(cache):
-    if cache.has_state_changed:
-        serialized = cache.serialize()
-        try:
-            TOKEN_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            TOKEN_CACHE_FILE.write_text(serialized)
-        except Exception: pass
-        st.session_state["_ms_token_cache"] = serialized
-
-
-def _get_msal_app(cache=None):
-    return msal.PublicClientApplication(MS_CLIENT_ID, authority=MS_AUTHORITY, token_cache=cache)
-
-
-def _get_access_token():
+    Cached for the life of the Streamlit process — credentials auto-refresh.
+    Returns (service, account_email) or (None, error_message).
+    """
+    if not GDRIVE_AVAILABLE:
+        return None, "google-api-python-client not installed"
     try:
-        cache = _get_token_cache(); app = _get_msal_app(cache)
-        accounts = app.get_accounts()
-        if accounts:
-            result = app.acquire_token_silent(MS_SCOPES, account=accounts[0])
-            if result and "access_token" in result:
-                _save_token_cache(cache); return result["access_token"]
-    except Exception:
-        TOKEN_CACHE_FILE.unlink(missing_ok=True)
-    return None
+        sa_info = st.secrets.get("GCP_SERVICE_ACCOUNT")
+        if not sa_info:
+            return None, "GCP_SERVICE_ACCOUNT not found in secrets"
+        # st.secrets gives an AttrDict — convert to plain dict
+        if not isinstance(sa_info, dict):
+            sa_info = dict(sa_info)
+        else:
+            sa_info = {k: v for k, v in sa_info.items()}
+        creds = service_account.Credentials.from_service_account_info(
+            sa_info, scopes=GDRIVE_SCOPES
+        )
+        service = build("drive", "v3", credentials=creds, cache_discovery=False)
+        return service, sa_info.get("client_email", "unknown")
+    except Exception as e:
+        return None, f"Auth failed: {e}"
 
 
-def _start_device_flow():
-    cache = _get_token_cache(); app = _get_msal_app(cache)
-    flow = app.initiate_device_flow(scopes=MS_SCOPES)
-    st.session_state["ms_flow"] = flow; st.session_state["ms_cache"] = cache
-    return flow
-
-
-def _complete_device_flow():
-    flow = st.session_state.get("ms_flow"); cache = st.session_state.get("ms_cache")
-    if not flow or not cache: return False, "No active auth flow."
-    app = _get_msal_app(cache); result = app.acquire_token_by_device_flow(flow)
-    if "access_token" in result:
-        _save_token_cache(cache)
-        st.session_state.pop("ms_flow", None); st.session_state.pop("ms_cache", None)
-        return True, result["access_token"]
-    err = result.get("error_description") or result.get("error") or str(result)
-    return False, err
-
-
-# ──────────────────── FOLDER ROTATION HELPERS ────────────────────────────
-def _count_folder_items(drive_prefix, folder_id, token):
-    """Return the number of child items (files) in a OneDrive folder.
-
-    Uses the /children endpoint with $count and pagination to handle
-    folders with many items.
+def _drive_list_children(service, folder_id, mime_filter=None):
+    """List all children of a Drive folder, paginating fully.
+    Returns list of dicts {id, name, mimeType}.
     """
-    h = {"Authorization": f"Bearer {token}"}
-    url = (f"https://graph.microsoft.com/v1.0/{drive_prefix}/items/{folder_id}"
-           f"/children?$top=200&$select=id")
-    total = 0
-    while url:
-        r = requests.get(url, headers=h, timeout=30)
-        if r.status_code != 200:
-            return total  # best-effort — if the call fails, assume 0
-        data = r.json()
-        total += len(data.get("value", []))
-        url = data.get("@odata.nextLink")
-    return total
+    q = f"'{folder_id}' in parents and trashed = false"
+    if mime_filter == "folder":
+        q += " and mimeType = 'application/vnd.google-apps.folder'"
+    elif mime_filter == "file":
+        q += " and mimeType != 'application/vnd.google-apps.folder'"
 
-
-def _list_batch_subfolders(drive_prefix, folder_id, token):
-    """Return a sorted list of (batch_number, folder_id, name) for existing
-    'Batch N' subfolders inside the given parent folder.
-    """
-    h = {"Authorization": f"Bearer {token}"}
-    url = (f"https://graph.microsoft.com/v1.0/{drive_prefix}/items/{folder_id}"
-           f"/children?$filter=folder ne null&$select=id,name,folder&$top=200")
-    batches = []
-    while url:
-        r = requests.get(url, headers=h, timeout=30)
-        if r.status_code != 200:
+    items, page_token = [], None
+    while True:
+        resp = service.files().list(
+            q=q,
+            spaces="drive",
+            fields="nextPageToken, files(id, name, mimeType)",
+            pageToken=page_token,
+            pageSize=200,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        ).execute()
+        items.extend(resp.get("files", []))
+        page_token = resp.get("nextPageToken")
+        if not page_token:
             break
-        data = r.json()
-        for item in data.get("value", []):
-            name = item.get("name", "")
-            # Match "Batch 1", "Batch 2", etc.
-            if name.startswith("Batch "):
-                try:
-                    num = int(name.split("Batch ", 1)[1])
-                    batches.append((num, item["id"], name))
-                except (ValueError, IndexError):
-                    pass
-        url = data.get("@odata.nextLink")
+    return items
+
+
+def _drive_count_files(service, folder_id):
+    """Count non-folder files directly inside *folder_id*."""
+    return len(_drive_list_children(service, folder_id, mime_filter="file"))
+
+
+def _drive_list_batch_subfolders(service, folder_id):
+    """Return sorted [(num, id, name)] for 'Batch N' subfolders."""
+    folders = _drive_list_children(service, folder_id, mime_filter="folder")
+    batches = []
+    for item in folders:
+        name = item.get("name", "")
+        if name.startswith("Batch "):
+            try:
+                num = int(name.split("Batch ", 1)[1])
+                batches.append((num, item["id"], name))
+            except (ValueError, IndexError):
+                pass
     batches.sort(key=lambda x: x[0])
     return batches
 
 
-def _create_subfolder(drive_prefix, parent_id, folder_name, token):
-    """Create a subfolder and return its item ID, or None on failure."""
-    h = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    url = f"https://graph.microsoft.com/v1.0/{drive_prefix}/items/{parent_id}/children"
-    body = {
-        "name": folder_name,
-        "folder": {},
-        "@microsoft.graph.conflictBehavior": "fail",
-    }
-    r = requests.post(url, headers=h, json=body, timeout=30)
-    if r.status_code in (200, 201):
-        return r.json().get("id")
-    return None
+def _drive_create_subfolder(service, parent_id, folder_name):
+    """Create a subfolder; return new folder ID or None."""
+    try:
+        meta = {
+            "name": folder_name,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [parent_id],
+        }
+        f = service.files().create(
+            body=meta,
+            fields="id",
+            supportsAllDrives=True,
+        ).execute()
+        return f.get("id")
+    except HttpError:
+        return None
 
 
-def _resolve_upload_folder(drive_prefix, root_folder_id, token, status_cb=None):
-    """Determine the correct folder to upload into, applying the 100-item
-    rotation rule.
-
-    Logic:
-      1. Count files in the root folder (excluding Batch subfolders).
-      2. If < FOLDER_MAX_ITEMS and no Batch subfolders exist, use root.
-      3. Otherwise, find the highest-numbered Batch subfolder.
-         - If it has < FOLDER_MAX_ITEMS files, use it.
-         - Otherwise, create the next Batch subfolder.
-      4. If root has >= FOLDER_MAX_ITEMS but no Batch folders yet,
-         create "Batch 1".
-
-    Returns (target_drive_prefix, target_folder_id, folder_display_name).
-    """
+def _resolve_upload_folder(service, root_folder_id, status_cb=None):
+    """Apply the FOLDER_MAX_ITEMS rotation rule. Returns (folder_id, label)."""
     def _cb(s):
         if status_cb: status_cb(s)
 
     _cb("📂 Checking folder capacity…")
 
-    batches = _list_batch_subfolders(drive_prefix, root_folder_id, token)
-    root_count = _count_folder_items(drive_prefix, root_folder_id, token)
-    # Subtract the Batch subfolders themselves from the root count
-    file_count_in_root = max(0, root_count - len(batches))
+    try:
+        batches = _drive_list_batch_subfolders(service, root_folder_id)
+        file_count_in_root = _drive_count_files(service, root_folder_id)
+    except HttpError as e:
+        _cb(f"   ⚠️ Could not list folder: {e}")
+        return root_folder_id, "root (error)"
 
     _cb(f"   Root folder: {file_count_in_root} file(s), {len(batches)} batch subfolder(s)")
 
@@ -816,118 +766,84 @@ def _resolve_upload_folder(drive_prefix, root_folder_id, token, status_cb=None):
     if file_count_in_root < FOLDER_MAX_ITEMS and len(batches) == 0:
         remaining = FOLDER_MAX_ITEMS - file_count_in_root
         _cb(f"   ✅ Using root folder ({remaining} slot(s) remaining)")
-        return drive_prefix, root_folder_id, "root"
+        return root_folder_id, "root"
 
     # Case 2: batch folders exist — check the latest one
     if batches:
         latest_num, latest_id, latest_name = batches[-1]
-        latest_count = _count_folder_items(drive_prefix, latest_id, token)
+        latest_count = _drive_count_files(service, latest_id)
         _cb(f"   Latest batch: '{latest_name}' with {latest_count} file(s)")
-
         if latest_count < FOLDER_MAX_ITEMS:
             remaining = FOLDER_MAX_ITEMS - latest_count
             _cb(f"   ✅ Using '{latest_name}' ({remaining} slot(s) remaining)")
-            return drive_prefix, latest_id, latest_name
-
-        # Latest batch is full — create the next one
+            return latest_id, latest_name
         next_num = latest_num + 1
     else:
-        # Root is full but no batch folders yet — start at Batch 1
         next_num = 1
 
     new_name = f"Batch {next_num}"
     _cb(f"   📁 Creating '{new_name}'…")
-    new_id = _create_subfolder(drive_prefix, root_folder_id, new_name, token)
+    new_id = _drive_create_subfolder(service, root_folder_id, new_name)
     if new_id:
         _cb(f"   ✅ Created '{new_name}' — uploading there")
-        return drive_prefix, new_id, new_name
-    else:
-        # Fallback: if folder creation fails, try uploading to root anyway
-        _cb(f"   ⚠️ Could not create '{new_name}' — falling back to root folder")
-        return drive_prefix, root_folder_id, "root (fallback)"
+        return new_id, new_name
+    _cb(f"   ⚠️ Could not create '{new_name}' — falling back to root folder")
+    return root_folder_id, "root (fallback)"
 
 
-def _onedrive_upload(data: bytes, filename: str, folder_name: str, token: str, status_cb=None, **kwargs):
-    h = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+def _gdrive_upload(data: bytes, filename: str, status_cb=None):
+    """Upload bytes to Google Drive with resumable chunking + progress.
+    Returns (success, web_link_or_error_string).
+    """
     def _cb(s):
         if status_cb: status_cb(s)
-    folder_id = None; drive_prefix = "me/drive"; folder_url = kwargs.get("folder_url","").strip()
-    if folder_url:
-        _cb("🔗 Resolving folder from URL…")
-        try:
-            import base64 as _b64
-            b64 = _b64.urlsafe_b64encode(folder_url.encode()).rstrip(b"=").decode()
-            for ep in [
-                f"https://graph.microsoft.com/v1.0/shares/u!{b64}/root?$select=id,name,webUrl,parentReference",
-                f"https://graph.microsoft.com/v1.0/shares/u!{b64}/driveItem?$select=id,name,webUrl,parentReference",
-            ]:
-                sr = requests.get(ep, headers=h, timeout=20)
-                _cb(f"   → HTTP {sr.status_code}")
-                if sr.status_code == 200:
-                    item = sr.json(); folder_id = item["id"]
-                    drv = item.get("parentReference",{}).get("driveId","")
-                    drive_prefix = f"drives/{drv}" if drv else "me/drive"
-                    _cb(f"✅ Folder resolved: '{item.get('name','?')}'"); break
-            if not folder_id: _cb(f"⚠️ URL resolve failed ({sr.status_code})")
-        except Exception as ex: _cb(f"⚠️ URL error: {ex}")
-    if not folder_id:
-        _cb("🔍 Searching personal OneDrive…")
-        r = requests.get(f"https://graph.microsoft.com/v1.0/me/drive/root/search(q='{folder_name}')?$select=id,name,webUrl,folder,parentReference", headers=h, timeout=20)
-        if r.status_code == 200:
-            hits = [i for i in r.json().get("value",[]) if folder_name.lower() in i.get("name","").lower()]
-            if hits:
-                item = hits[0]; folder_id = item["id"]
-                drv = item.get("parentReference",{}).get("driveId","")
-                drive_prefix = f"drives/{drv}" if drv else "me/drive"
-                _cb(f"✅ Found: '{item['name']}'")
-    if not folder_id:
-        return False, (f"❌ Folder '{folder_name}' not found. Paste the folder URL above.")
 
-    # ── FOLDER ROTATION — pick the right subfolder ────────────────────────
-    drive_prefix, folder_id, folder_label = _resolve_upload_folder(
-        drive_prefix, folder_id, token, status_cb=status_cb
+    if not GDRIVE_AVAILABLE:
+        return False, "❌ google-api-python-client not installed"
+    if not GDRIVE_FOLDER_ID:
+        return False, "❌ GDRIVE_FOLDER_ID not set in secrets"
+
+    service, info = _get_drive_service()
+    if service is None:
+        return False, f"❌ {info}"
+
+    # Pick (or create) the right batch folder
+    target_folder, label = _resolve_upload_folder(service, GDRIVE_FOLDER_ID, status_cb=status_cb)
+
+    _cb("⬆️ Starting resumable upload…")
+    safe_name = filename.replace(" ", "_")
+    media = MediaIoBaseUpload(
+        BytesIO(data),
+        mimetype="video/mp4",
+        chunksize=5 * 1024 * 1024,
+        resumable=True,
     )
+    meta = {"name": safe_name, "parents": [target_folder]}
 
-    _cb("⬆️ Creating upload session…")
-    safe_name = filename.replace(" ","_")
-    if folder_id and drive_prefix != "me/drive":
-        urls_to_try = [
-            f"https://graph.microsoft.com/v1.0/{drive_prefix}/items/{folder_id}:/{safe_name}:/createUploadSession",
-            f"https://graph.microsoft.com/v1.0/{drive_prefix}/items/{folder_id}:/{filename}:/createUploadSession",
-        ]
-    else:
-        urls_to_try = [
-            f"https://graph.microsoft.com/v1.0/me/drive/items/{folder_id}:/{safe_name}:/createUploadSession",
-            f"https://graph.microsoft.com/v1.0/me/drive/root:/{folder_name}/{safe_name}:/createUploadSession",
-        ]
-    r2 = None; errors = []
-    for i, session_url in enumerate(urls_to_try):
-        _cb(f"   Trying URL format {i+1}…")
-        try:
-            r2 = requests.post(session_url, headers=h, json={"item":{"@microsoft.graph.conflictBehavior":"rename"}}, timeout=30)
-            if r2.status_code in (200,201): break
-            else: errors.append(f"Format {i+1} → HTTP {r2.status_code}"); r2 = None
-        except Exception as ex: errors.append(f"Format {i+1} → {ex}"); r2 = None
-    if r2 is None: return False, f"❌ All upload attempts failed:\n{chr(10).join(errors)}"
-    upload_url = r2.json().get("uploadUrl")
-    if not upload_url: return False, f"❌ No uploadUrl in response"
-    CHUNK = 5*1024*1024; total = len(data); uploaded = 0; file_web_url = None; last_pct = -1
-    while uploaded < total:
-        chunk = data[uploaded:uploaded+CHUNK]; chunk_end = uploaded+len(chunk)-1
-        pct = int(uploaded/total*100)
-        if pct//10 != last_pct//10:
-            _cb(f"⬆️ Uploading to {folder_label}… {pct}% ({uploaded//1048576} / {total//1048576} MB)")
-            last_pct = pct
-        r3 = requests.put(upload_url, data=chunk, timeout=180,
-                          headers={"Content-Length":str(len(chunk)),"Content-Range":f"bytes {uploaded}-{chunk_end}/{total}","Content-Type":"video/mp4"})
-        if r3.status_code in (200,201):
-            try: file_web_url = r3.json().get("webUrl","")
-            except: file_web_url = ""
-        elif r3.status_code == 202: pass
-        else: return False, f"Upload failed at byte {uploaded} (HTTP {r3.status_code})"
-        uploaded += len(chunk)
-    _cb(f"✅ Upload complete to '{folder_label}'! ({total//1048576} MB)")
-    return True, file_web_url or "https://onedrive.live.com"
+    try:
+        request = service.files().create(
+            body=meta,
+            media_body=media,
+            fields="id, webViewLink",
+            supportsAllDrives=True,
+        )
+        total_mb = len(data) // 1048576
+        last_pct = -1
+        response = None
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                pct = int(status.progress() * 100)
+                if pct // 10 != last_pct // 10:
+                    done_mb = int(status.progress() * total_mb)
+                    _cb(f"⬆️ Uploading to {label}… {pct}% ({done_mb} / {total_mb} MB)")
+                    last_pct = pct
+        _cb(f"✅ Upload complete to '{label}'! ({total_mb} MB)")
+        return True, response.get("webViewLink", "https://drive.google.com")
+    except HttpError as e:
+        return False, f"❌ Drive API error: {e}"
+    except Exception as e:
+        return False, f"❌ Upload error: {e}"
 
 
 def _check_template():
@@ -962,7 +878,7 @@ def _new_item(course_name, unit_number, orig_filename, video_bytes):
         "error":         None,
         "secs":          None,
         "mb_out":        None,
-        "od_url":        None,
+        "gd_url":        None,
     }
 
 
@@ -987,10 +903,7 @@ def _process_item(item: dict, bar_slot, msg_slot) -> dict:
                 except Exception as e: errors[name] = e
 
             with ThreadPoolExecutor(max_workers=1) as pool:
-                # normalise runs in background (longest step)
                 pool.submit(_job, "norm", normalise, raw, tmp/"norm.mp4")
-                # intro & outro share INTRO_TPL — run sequentially to
-                # avoid concurrent FFmpeg reads that fail on Windows
                 _job("intro", make_intro, item["course_name"], item["unit_number"], "", tmp)
                 _job("outro", make_outro, tmp)
 
@@ -1073,36 +986,47 @@ st.markdown("""<div style="text-align:center;margin:8px 0 24px">
   <span class="fb">🔚 Outro</span>
 </div>""", unsafe_allow_html=True)
 
-# ── OneDrive connection (top, so token is available everywhere) ───────────
-if ONEDRIVE_AVAILABLE:
-    _token = _get_access_token()
-    with st.expander("☁  OneDrive Connection", expanded=not bool(_token)):
-        if _token:
-            st.success("✅ Connected — processed videos can be uploaded to the department folder.")
+# ── Google Drive connection status ────────────────────────────────────────
+if GDRIVE_AVAILABLE:
+    _svc, _info = _get_drive_service()
+    with st.expander("☁  Google Drive Connection", expanded=_svc is None):
+        if _svc is not None and GDRIVE_FOLDER_ID:
+            st.success(f"✅ Connected as service account — processed videos can be uploaded.")
+            st.caption(f"📧 `{_info}`")
+            st.caption(f"📂 Target folder ID: `{GDRIVE_FOLDER_ID}`")
             st.caption(f"📂 Auto-rotation enabled: new subfolder every {FOLDER_MAX_ITEMS} videos")
-            if st.button("🔄 Switch / Re-connect", type="secondary", key="od_reset"):
-                TOKEN_CACHE_FILE.unlink(missing_ok=True)
-                st.session_state.pop("ms_flow", None); st.session_state.pop("ms_cache", None)
-                st.rerun()
+        elif _svc is not None and not GDRIVE_FOLDER_ID:
+            st.warning("⚠️ Service account loaded, but `GDRIVE_FOLDER_ID` is not set in secrets.")
+            st.caption(f"📧 Service account: `{_info}`")
+            st.markdown("""
+            **To finish setup:**
+            1. In Google Drive, share the destination folder with the email above (Editor access).
+            2. Copy the folder ID from its URL (the part after `/folders/`).
+            3. Add `GDRIVE_FOLDER_ID = "..."` to your Streamlit secrets.
+            """)
         else:
-            st.markdown('<p style="font-size:13px;color:rgba(255,255,255,.7)">Sign in once — stays connected for all users.</p>', unsafe_allow_html=True)
-            if "ms_flow" not in st.session_state:
-                if st.button("🔑 Connect Department Microsoft Account"):
-                    with st.spinner("Starting sign-in…"):
-                        _start_device_flow()
-                    st.rerun()
-            else:
-                flow = st.session_state["ms_flow"]
-                st.markdown(f"""<div class="auth-box">
-                <strong>Step 1</strong> — Open: <a href="{flow['verification_uri']}" target="_blank" style="color:#60ccbe">{flow['verification_uri']}</a><br><br>
-                <strong>Step 2</strong> — Enter code: &nbsp;<code style="background:#1a3a5c;padding:4px 12px;border-radius:6px;font-size:18px;letter-spacing:3px;color:#60ccbe">{flow['user_code']}</code><br><br>
-                <strong>Step 3</strong> — Sign in, then click below.
-                </div>""", unsafe_allow_html=True)
-                if st.button("✅ I've signed in — complete connection"):
-                    with st.spinner("Completing sign-in…"):
-                        ok, result = _complete_device_flow()
-                    if ok: st.success("✅ Connected!"); st.rerun()
-                    else:  st.error(f"Sign-in failed: {result}")
+            st.error(f"❌ Google Drive not configured: {_info}")
+            st.markdown("""
+            **Setup required:**
+            1. Create a service account in Google Cloud Console and enable the **Google Drive API**.
+            2. Download the JSON key.
+            3. Add it to your Streamlit secrets as a TOML table:
+            ```toml
+            [GCP_SERVICE_ACCOUNT]
+            type = "service_account"
+            project_id = "..."
+            private_key_id = "..."
+            private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
+            client_email = "...@....iam.gserviceaccount.com"
+            client_id = "..."
+            # ... etc
+
+            GDRIVE_FOLDER_ID = "your-folder-id-here"
+            ```
+            4. Share your destination Drive folder with the service account's `client_email` (Editor access).
+            """)
+else:
+    st.error("❌ `google-api-python-client` not installed. Run: `pip install google-api-python-client google-auth`")
 
 st.markdown("---")
 
@@ -1169,6 +1093,15 @@ if not queue:
     st.markdown('<p style="color:rgba(255,255,255,.35);font-size:14px;margin:16px 0 0 38px">'
                 'No videos queued yet — add one above.</p>', unsafe_allow_html=True)
 else:
+    # Helper: is Drive ready?
+    def _drive_ready():
+        if not GDRIVE_AVAILABLE or not GDRIVE_FOLDER_ID:
+            return False
+        svc, _ = _get_drive_service()
+        return svc is not None
+
+    drive_ready = _drive_ready()
+
     # ── Queue rows ────────────────────────────────────────────────────────
     for idx, item in enumerate(queue):
         status  = item["status"]
@@ -1216,31 +1149,26 @@ else:
                     key=f"dl_{item['id']}",
                 )
         with btn_cols[3]:
-            current_token = _get_access_token() if ONEDRIVE_AVAILABLE else None
-            if status == "done" and item.get("result_data") and current_token:
-                od_label = "✅ Uploaded" if item.get("od_url") else "☁ Upload"
-                if not item.get("od_url"):
-                    if st.button(od_label, key=f"od_{item['id']}"):
+            if status == "done" and item.get("result_data") and drive_ready:
+                if not item.get("gd_url"):
+                    if st.button("☁ Upload", key=f"gd_{item['id']}"):
                         with st.spinner(f"Uploading {item['result_filename']}…"):
                             logs = []
-                            ok, result = _onedrive_upload(
-                                item["result_data"], item["result_filename"], "",
-                                current_token,
+                            ok, result = _gdrive_upload(
+                                item["result_data"], item["result_filename"],
                                 status_cb=lambda s: logs.append(s),
-                                folder_url=ONEDRIVE_FOLDER_URL,
                             )
                         if ok:
-                            # Update item in queue
                             for q in st.session_state["queue"]:
                                 if q["id"] == item["id"]:
-                                    q["od_url"] = result
+                                    q["gd_url"] = result
                             st.success(f"✅ Uploaded! [Open]({result})")
                             st.rerun()
                         else:
                             st.error(result)
                 else:
-                    st.markdown(f'<a href="{item["od_url"]}" target="_blank" '
-                                f'style="color:#50c878;font-size:13px">✅ On OneDrive</a>',
+                    st.markdown(f'<a href="{item["gd_url"]}" target="_blank" '
+                                f'style="color:#50c878;font-size:13px">✅ On Drive</a>',
                                 unsafe_allow_html=True)
 
     st.markdown("")
@@ -1257,7 +1185,6 @@ else:
             disabled=process_disabled,
             key="btn_process",
         ):
-            # Process all pending items sequentially
             overall_bar  = st.progress(0, "Starting queue…")
             overall_msg  = st.empty()
             item_bar     = st.progress(0)
@@ -1267,7 +1194,6 @@ else:
             total_jobs  = len(pending_ids)
 
             for job_idx, iid in enumerate(pending_ids):
-                # Find item in live queue list
                 item_ref = next((q for q in st.session_state["queue"] if q["id"] == iid), None)
                 if item_ref is None:
                     continue
@@ -1283,7 +1209,6 @@ else:
 
                 updated = _process_item(item_ref, item_bar, item_msg)
 
-                # Write back into queue
                 for q in st.session_state["queue"]:
                     if q["id"] == iid:
                         q.update(updated)
@@ -1306,27 +1231,26 @@ else:
             st.session_state["queue"] = []
             st.rerun()
 
-    # ── Bulk OneDrive upload for all done items ───────────────────────────
-    current_token = _get_access_token() if ONEDRIVE_AVAILABLE else None
-    uploadable = [q for q in queue if q["status"] == "done" and not q.get("od_url") and q.get("result_data")]
-    if uploadable and current_token:
+    # ── Bulk Google Drive upload for all done items ───────────────────────
+    uploadable = [q for q in queue if q["status"] == "done" and not q.get("gd_url") and q.get("result_data")]
+    if uploadable and drive_ready:
         st.markdown("---")
         st.markdown('<div style="margin:4px 0 12px"><span class="sn">☁</span>'
-                    '<span class="st">Bulk OneDrive Upload</span></div>', unsafe_allow_html=True)
-        if st.button(f"☁ Upload All to OneDrive  ({len(uploadable)} files)",
-                     use_container_width=True, key="btn_od_all"):
+                    '<span class="st">Bulk Google Drive Upload</span></div>', unsafe_allow_html=True)
+        if st.button(f"☁ Upload All to Google Drive  ({len(uploadable)} files)",
+                     use_container_width=True, key="btn_gd_all"):
             bulk_bar = st.progress(0)
             bulk_msg = st.empty()
             for i, item in enumerate(uploadable):
                 bulk_msg.info(f"Uploading {i+1}/{len(uploadable)}: {item['result_filename']}")
                 bulk_bar.progress((i) / len(uploadable))
-                ok, result = _onedrive_upload(
-                    item["result_data"], item["result_filename"], "",
-                    current_token, folder_url=ONEDRIVE_FOLDER_URL,
+                ok, result = _gdrive_upload(
+                    item["result_data"], item["result_filename"],
+                    status_cb=lambda s: bulk_msg.info(s),
                 )
                 for q in st.session_state["queue"]:
                     if q["id"] == item["id"]:
-                        q["od_url"] = result if ok else "error"
+                        q["gd_url"] = result if ok else "error"
             bulk_bar.progress(1.0)
             bulk_msg.success(f"✅ Uploaded {len(uploadable)} files!")
             time.sleep(1)
@@ -1349,7 +1273,7 @@ if done_items:
                                    file_name=item["result_filename"], mime="video/mp4",
                                    use_container_width=True, key=f"dlp_{item['id']}")
             with c2:
-                if item.get("od_url") and item["od_url"] != "error":
-                    st.markdown(f'<a href="{item["od_url"]}" target="_blank" '
-                                f'style="color:#50c878">✅ View on OneDrive</a>',
+                if item.get("gd_url") and item["gd_url"] != "error":
+                    st.markdown(f'<a href="{item["gd_url"]}" target="_blank" '
+                                f'style="color:#50c878">✅ View on Google Drive</a>',
                                 unsafe_allow_html=True)

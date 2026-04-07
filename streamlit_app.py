@@ -4,16 +4,19 @@ SLC Video Merger – Streamlit Edition  (Queue build, Google Drive)
 All text is rendered by Pillow (no FFmpeg drawtext = no escaping bugs).
 FFmpeg only does: overlay PNG on video, normalise, transitions, concatenate.
 
-Google Drive upload uses a service account.
+Google Drive upload uses OAuth2 user sign-in (web flow).
 Setup:
-  1. Create a service account in Google Cloud Console, enable Drive API,
-     download the JSON key.
-  2. Paste the JSON key contents into st.secrets["GCP_SERVICE_ACCOUNT"]
-     (as a dict / TOML table).
-  3. In Google Drive, share the target folder with the service account's
-     client_email (give it Editor access).
-  4. Put the folder ID in st.secrets["GDRIVE_FOLDER_ID"] (the long string
-     after /folders/ in the folder URL).
+  1. In Google Cloud Console, create an OAuth 2.0 Client ID of type
+     "Web application" and enable the Google Drive API.
+  2. Add your Streamlit app's URL as an Authorised redirect URI
+     (e.g. https://your-app.streamlit.app  or  http://localhost:8501).
+  3. Add to st.secrets:
+        GOOGLE_OAUTH_CLIENT_ID     = "...apps.googleusercontent.com"
+        GOOGLE_OAUTH_CLIENT_SECRET = "..."
+        GOOGLE_REDIRECT_URI        = "https://your-app.streamlit.app"
+        GDRIVE_FOLDER_ID           = "the long string after /folders/"
+  4. Share the destination Drive folder with whoever is going to sign in
+     (or make sure they already own it).
 """
 
 import os, json, subprocess, tempfile, time, uuid
@@ -32,7 +35,9 @@ except ImportError:
     CV2_AVAILABLE = False
 
 try:
-    from google.oauth2 import service_account
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request
+    from google_auth_oauthlib.flow import Flow
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaIoBaseUpload
     from googleapiclient.errors import HttpError
@@ -61,9 +66,15 @@ LOGO_H            = 44
 LOGO_RIGHT_MARGIN = 113
 LOGO_BOTTOM_MARGIN = 53
 
-# ── Google Drive config ───────────────────────────────────────────────────
-GDRIVE_FOLDER_ID = st.secrets.get("GDRIVE_FOLDER_ID", "")
-GDRIVE_SCOPES    = ["https://www.googleapis.com/auth/drive"]
+# ── Google Drive OAuth config ─────────────────────────────────────────────
+GDRIVE_FOLDER_ID    = st.secrets.get("GDRIVE_FOLDER_ID", "")
+GOOGLE_CLIENT_ID    = st.secrets.get("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = st.secrets.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI = st.secrets.get("GOOGLE_REDIRECT_URI", "")
+GDRIVE_SCOPES       = ["https://www.googleapis.com/auth/drive.file",
+                       "https://www.googleapis.com/auth/drive"]
+
+GOOGLE_TOKEN_FILE = Path("/tmp/google_token.json")
 
 TEAL, WHITE = (96, 204, 190), (255, 255, 255)
 
@@ -651,32 +662,120 @@ def preview_frame(course, unit_num, unit_title):
     return buf
 
 
-# ──────────────────── GOOGLE DRIVE (SERVICE ACCOUNT) ─────────────────────
-@st.cache_resource
-def _get_drive_service():
-    """Build a Google Drive API service from the service-account secret.
+# ──────────────────── GOOGLE DRIVE (OAUTH USER FLOW) ─────────────────────
+def _build_oauth_flow():
+    """Build a google-auth-oauthlib Flow from secrets."""
+    client_config = {
+        "web": {
+            "client_id":     GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "auth_uri":      "https://accounts.google.com/o/oauth2/auth",
+            "token_uri":     "https://oauth2.googleapis.com/token",
+            "redirect_uris": [GOOGLE_REDIRECT_URI],
+        }
+    }
+    flow = Flow.from_client_config(client_config, scopes=GDRIVE_SCOPES)
+    flow.redirect_uri = GOOGLE_REDIRECT_URI
+    return flow
 
-    Cached for the life of the Streamlit process — credentials auto-refresh.
-    Returns (service, account_email) or (None, error_message).
-    """
-    if not GDRIVE_AVAILABLE:
-        return None, "google-api-python-client not installed"
+
+def _save_credentials(creds: "Credentials"):
+    """Persist credentials to disk + session_state so they survive reruns."""
+    data = {
+        "token":         creds.token,
+        "refresh_token": creds.refresh_token,
+        "token_uri":     creds.token_uri,
+        "client_id":     creds.client_id,
+        "client_secret": creds.client_secret,
+        "scopes":        creds.scopes,
+    }
     try:
-        sa_info = st.secrets.get("GCP_SERVICE_ACCOUNT")
-        if not sa_info:
-            return None, "GCP_SERVICE_ACCOUNT not found in secrets"
-        # st.secrets gives an AttrDict — convert to plain dict
-        if not isinstance(sa_info, dict):
-            sa_info = dict(sa_info)
-        else:
-            sa_info = {k: v for k, v in sa_info.items()}
-        creds = service_account.Credentials.from_service_account_info(
-            sa_info, scopes=GDRIVE_SCOPES
+        GOOGLE_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        GOOGLE_TOKEN_FILE.write_text(json.dumps(data))
+    except Exception:
+        pass
+    st.session_state["_google_creds"] = data
+
+
+def _load_credentials():
+    """Try to load saved credentials. Returns Credentials or None."""
+    data = st.session_state.get("_google_creds")
+    if not data and GOOGLE_TOKEN_FILE.exists():
+        try:
+            data = json.loads(GOOGLE_TOKEN_FILE.read_text())
+            st.session_state["_google_creds"] = data
+        except Exception:
+            data = None
+    if not data:
+        return None
+    try:
+        creds = Credentials(
+            token=data.get("token"),
+            refresh_token=data.get("refresh_token"),
+            token_uri=data.get("token_uri"),
+            client_id=data.get("client_id"),
+            client_secret=data.get("client_secret"),
+            scopes=data.get("scopes"),
         )
+        # Refresh if expired
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            _save_credentials(creds)
+        return creds
+    except Exception:
+        return None
+
+
+def _clear_credentials():
+    GOOGLE_TOKEN_FILE.unlink(missing_ok=True)
+    st.session_state.pop("_google_creds", None)
+    st.session_state.pop("_google_user_email", None)
+
+
+def _get_drive_service():
+    """Return (service, user_email) or (None, error_message)."""
+    if not GDRIVE_AVAILABLE:
+        return None, "google-api-python-client / google-auth-oauthlib not installed"
+    if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI):
+        return None, "OAuth client not configured in secrets"
+
+    creds = _load_credentials()
+    if creds is None or not creds.valid:
+        return None, "Not signed in"
+
+    try:
         service = build("drive", "v3", credentials=creds, cache_discovery=False)
-        return service, sa_info.get("client_email", "unknown")
+        # Cache the email so we don't call /about every rerun
+        email = st.session_state.get("_google_user_email")
+        if not email:
+            try:
+                about = service.about().get(fields="user(emailAddress)").execute()
+                email = about.get("user", {}).get("emailAddress", "unknown")
+                st.session_state["_google_user_email"] = email
+            except Exception:
+                email = "unknown"
+        return service, email
     except Exception as e:
-        return None, f"Auth failed: {e}"
+        return None, f"Drive API error: {e}"
+
+
+def _handle_oauth_callback():
+    """If the URL contains ?code=..., exchange it for a token. Returns True if handled."""
+    params = st.query_params
+    code = params.get("code")
+    if not code:
+        return False
+    try:
+        flow = _build_oauth_flow()
+        flow.fetch_token(code=code)
+        _save_credentials(flow.credentials)
+        # Clean the URL so refreshes don't re-trigger
+        st.query_params.clear()
+        return True
+    except Exception as e:
+        st.error(f"Sign-in failed: {e}")
+        st.query_params.clear()
+        return False
 
 
 def _drive_list_children(service, folder_id, mime_filter=None):
@@ -986,47 +1085,75 @@ st.markdown("""<div style="text-align:center;margin:8px 0 24px">
   <span class="fb">🔚 Outro</span>
 </div>""", unsafe_allow_html=True)
 
+# ── Handle OAuth redirect callback (must run before any other Drive calls)
+if GDRIVE_AVAILABLE and GOOGLE_CLIENT_ID:
+    if _handle_oauth_callback():
+        st.success("✅ Signed in to Google Drive!")
+        time.sleep(0.6)
+        st.rerun()
+
 # ── Google Drive connection status ────────────────────────────────────────
 if GDRIVE_AVAILABLE:
-    _svc, _info = _get_drive_service()
+    _oauth_configured = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI)
+    _svc, _info = _get_drive_service() if _oauth_configured else (None, "OAuth client not configured")
+
     with st.expander("☁  Google Drive Connection", expanded=_svc is None):
-        if _svc is not None and GDRIVE_FOLDER_ID:
-            st.success(f"✅ Connected as service account — processed videos can be uploaded.")
-            st.caption(f"📧 `{_info}`")
+        if not _oauth_configured:
+            st.error("❌ Google OAuth client not configured.")
+            st.markdown("""
+            **Setup required (one-time):**
+            1. In **Google Cloud Console**, enable the **Google Drive API**.
+            2. Create an **OAuth 2.0 Client ID** of type **Web application**.
+            3. Add your Streamlit app URL as an **Authorised redirect URI**
+               (e.g. `https://your-app.streamlit.app` or `http://localhost:8501`).
+            4. Add to your Streamlit secrets:
+            ```toml
+            GOOGLE_OAUTH_CLIENT_ID     = "...apps.googleusercontent.com"
+            GOOGLE_OAUTH_CLIENT_SECRET = "..."
+            GOOGLE_REDIRECT_URI        = "https://your-app.streamlit.app"
+            GDRIVE_FOLDER_ID           = "1cY7v7956TyrJbGPGno4QQJ5Zpj6bXDjZ"
+            ```
+            """)
+        elif _svc is not None and GDRIVE_FOLDER_ID:
+            st.success(f"✅ Connected as **{_info}** — processed videos can be uploaded.")
             st.caption(f"📂 Target folder ID: `{GDRIVE_FOLDER_ID}`")
             st.caption(f"📂 Auto-rotation enabled: new subfolder every {FOLDER_MAX_ITEMS} videos")
+            if st.button("🔄 Sign out / switch account", type="secondary", key="gd_signout"):
+                _clear_credentials()
+                st.rerun()
         elif _svc is not None and not GDRIVE_FOLDER_ID:
-            st.warning("⚠️ Service account loaded, but `GDRIVE_FOLDER_ID` is not set in secrets.")
-            st.caption(f"📧 Service account: `{_info}`")
-            st.markdown("""
-            **To finish setup:**
-            1. In Google Drive, share the destination folder with the email above (Editor access).
-            2. Copy the folder ID from its URL (the part after `/folders/`).
-            3. Add `GDRIVE_FOLDER_ID = "..."` to your Streamlit secrets.
-            """)
+            st.warning(f"⚠️ Signed in as **{_info}**, but `GDRIVE_FOLDER_ID` is not set in secrets.")
+            st.markdown("Add the folder ID from your Drive URL to secrets, then refresh.")
+            if st.button("🔄 Sign out", type="secondary", key="gd_signout2"):
+                _clear_credentials()
+                st.rerun()
         else:
-            st.error(f"❌ Google Drive not configured: {_info}")
-            st.markdown("""
-            **Setup required:**
-            1. Create a service account in Google Cloud Console and enable the **Google Drive API**.
-            2. Download the JSON key.
-            3. Add it to your Streamlit secrets as a TOML table:
-            ```toml
-            [GCP_SERVICE_ACCOUNT]
-            type = "service_account"
-            project_id = "..."
-            private_key_id = "..."
-            private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
-            client_email = "...@....iam.gserviceaccount.com"
-            client_id = "..."
-            # ... etc
-
-            GDRIVE_FOLDER_ID = "your-folder-id-here"
-            ```
-            4. Share your destination Drive folder with the service account's `client_email` (Editor access).
-            """)
+            st.markdown('<p style="font-size:13px;color:rgba(255,255,255,.7)">'
+                        'Sign in with Google to enable uploads to the department folder.</p>',
+                        unsafe_allow_html=True)
+            try:
+                flow = _build_oauth_flow()
+                auth_url, _ = flow.authorization_url(
+                    access_type="offline",
+                    include_granted_scopes="true",
+                    prompt="consent",
+                )
+                st.markdown(f"""<div class="auth-box">
+                <strong>Step 1</strong> — Click the link to sign in with Google:<br><br>
+                <a href="{auth_url}" target="_self" style="background:#60ccbe;color:#0a2a3c;
+                   padding:10px 24px;border-radius:10px;text-decoration:none;font-weight:600;
+                   display:inline-block">🔑 Sign in with Google</a><br><br>
+                <strong>Step 2</strong> — After approving, Google will redirect you back here
+                automatically and complete the connection.
+                </div>""", unsafe_allow_html=True)
+                if not GDRIVE_FOLDER_ID:
+                    st.warning("⚠️ Note: `GDRIVE_FOLDER_ID` is also not set in secrets — "
+                               "uploads won't work until that's added.")
+            except Exception as e:
+                st.error(f"Could not build sign-in URL: {e}")
 else:
-    st.error("❌ `google-api-python-client` not installed. Run: `pip install google-api-python-client google-auth`")
+    st.error("❌ Google libraries not installed. Run: "
+             "`pip install google-api-python-client google-auth google-auth-oauthlib`")
 
 st.markdown("---")
 

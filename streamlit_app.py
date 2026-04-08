@@ -4,12 +4,13 @@ SLC Video Merger – Streamlit Edition  (Queue build, Google Drive upload)
 All text is rendered by Pillow (no FFmpeg drawtext = no escaping bugs).
 FFmpeg only does: overlay PNG on video, normalise, transitions, concatenate.
 
-Google Drive upload uses a Service Account (no user login).
-The target folder must live in a Google Workspace Shared Drive and must be
-shared with the service account's client_email as Content manager / Editor.
+Google Drive upload uses an OAuth refresh token (one-time sign-in).
+Uploads land in your personal My Drive folder and count against your own
+Drive quota. Run `get_refresh_token.py` once to capture the refresh token,
+then paste the values into .streamlit/secrets.toml.
 """
 
-import os, json, subprocess, tempfile, time, uuid, re
+import os, json, subprocess, tempfile, time, uuid, re, html, hmac, unicodedata
 from pathlib import Path
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
@@ -25,7 +26,8 @@ except ImportError:
     CV2_AVAILABLE = False
 
 try:
-    from google.oauth2 import service_account
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request as GoogleAuthRequest
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaIoBaseUpload
     from googleapiclient.errors import HttpError
@@ -62,6 +64,105 @@ TEAL, WHITE = (96, 204, 190), (255, 255, 255)
 
 # ── Folder rotation config ────────────────────────────────────────────────
 FOLDER_MAX_ITEMS = 50   # create a new batch folder after this many files
+
+# ── Security config ───────────────────────────────────────────────────────
+MAX_UPLOAD_MB        = 500          # hard cap on any single video upload
+MAX_TEXT_FIELD_LEN   = 200          # course name / unit number length limit
+APP_PASSWORD         = st.secrets.get("APP_PASSWORD", "")  # blank = open access
+
+
+# ──────────────────── SECURITY HELPERS ────────────────────────────────────
+def _esc(s) -> str:
+    """HTML-escape any value that will be rendered with unsafe_allow_html.
+    Converts None/non-strings to empty string. Prevents stored XSS."""
+    if s is None:
+        return ""
+    return html.escape(str(s), quote=True)
+
+
+def _clean_text_field(s: str, max_len: int = MAX_TEXT_FIELD_LEN) -> str:
+    """Normalise and strip control characters from a user text field.
+    Keeps printable characters, drops anything in the Cc/Cf Unicode
+    category (control/format), collapses whitespace, and caps length."""
+    if not s:
+        return ""
+    # Normalise unicode so visually-identical lookalikes collapse
+    s = unicodedata.normalize("NFKC", s)
+    # Drop control and format characters (including nulls, newlines, RTL overrides)
+    s = "".join(ch for ch in s if unicodedata.category(ch)[0] != "C")
+    # Collapse runs of whitespace
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:max_len]
+
+
+def _safe_filename(name: str, max_len: int = 120) -> str:
+    """Produce a safe filename for Google Drive / local filesystems.
+    Removes path separators, reserved Windows names, control characters,
+    and anything outside a conservative allow-list."""
+    if not name:
+        return "video.mp4"
+    # Strip directory components defensively
+    name = os.path.basename(name)
+    # Normalise unicode
+    name = unicodedata.normalize("NFKC", name)
+    # Replace path separators and NTFS-reserved chars with underscore
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f]+', "_", name)
+    # Conservative allow-list: letters, digits, space, dot, dash, underscore,
+    # parentheses, pipe (already removed above). Everything else becomes "_".
+    name = re.sub(r"[^A-Za-z0-9 ._\-()]+", "_", name)
+    # Collapse repeated underscores/spaces, strip leading dots (hidden files)
+    name = re.sub(r"_+", "_", name).strip(" ._")
+    if not name:
+        name = "video"
+    # Reserved Windows device names
+    reserved = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} \
+        | {f"LPT{i}" for i in range(1, 10)}
+    stem = name.rsplit(".", 1)[0].upper()
+    if stem in reserved:
+        name = "_" + name
+    # Cap length, preserving extension if present
+    if len(name) > max_len:
+        if "." in name:
+            stem, ext = name.rsplit(".", 1)
+            name = stem[: max_len - len(ext) - 1] + "." + ext
+        else:
+            name = name[:max_len]
+    return name
+
+
+def _sanitise_error(e: Exception, max_len: int = 300) -> str:
+    """Turn an exception into a short, non-leaking user-facing message.
+    Strips absolute paths (which may expose tempdir/internal layout) and
+    caps the total length."""
+    msg = str(e) if e else "unknown error"
+    # Hide absolute POSIX and Windows paths
+    msg = re.sub(r"(/[^\s'\"]+)+", "<path>", msg)
+    msg = re.sub(r"[A-Za-z]:\\[^\s'\"]+", "<path>", msg)
+    if len(msg) > max_len:
+        msg = msg[:max_len] + "…"
+    return msg
+
+
+def _require_password():
+    """Optional password gate. If APP_PASSWORD is set in secrets, block
+    the UI until the user supplies the correct value. Uses hmac.compare_digest
+    for constant-time comparison to prevent timing attacks."""
+    if not APP_PASSWORD:
+        return  # open access mode
+    if st.session_state.get("_auth_ok"):
+        return
+    st.markdown("### 🔒 Restricted access")
+    st.caption("This tool is password-protected. Enter the access password to continue.")
+    pw = st.text_input("Password", type="password", key="_pw_input")
+    if st.button("Unlock", type="primary"):
+        if pw and hmac.compare_digest(pw, APP_PASSWORD):
+            st.session_state["_auth_ok"] = True
+            st.rerun()
+        else:
+            # Small delay softens brute-force attempts
+            time.sleep(1.0)
+            st.error("❌ Incorrect password.")
+    st.stop()
 
 
 def _font(name):
@@ -668,14 +769,25 @@ def preview_frame(course, unit_num, unit_title):
 # ──────────────────── GOOGLE DRIVE SERVICE ──────────────────────────────
 @st.cache_resource(show_spinner=False)
 def _get_drive_service():
-    """Build an authenticated Drive v3 client from the service account
-    credentials stored in st.secrets. Cached for the app's lifetime."""
+    """Build an authenticated Drive v3 client from an OAuth refresh token
+    stored in st.secrets. Cached for the app's lifetime. The refresh token
+    is exchanged for a short-lived access token automatically on every
+    request by the google-auth library."""
     if not GDRIVE_AVAILABLE:
         return None
     try:
-        sa_info = dict(st.secrets["gcp_service_account"])
-        creds = service_account.Credentials.from_service_account_info(
-            sa_info, scopes=GDRIVE_SCOPES)
+        cfg = st.secrets["gdrive_oauth"]
+        creds = Credentials(
+            token=None,
+            refresh_token=cfg["refresh_token"],
+            client_id=cfg["client_id"],
+            client_secret=cfg["client_secret"],
+            token_uri="https://oauth2.googleapis.com/token",
+            scopes=GDRIVE_SCOPES,
+        )
+        # Prime the access token once so any auth failure surfaces now,
+        # not deep inside an upload call.
+        creds.refresh(GoogleAuthRequest())
         return build("drive", "v3", credentials=creds, cache_discovery=False)
     except Exception:
         return None
@@ -824,7 +936,8 @@ def _gdrive_upload(data: bytes, filename: str, service, folder_url: str,
         ).execute()
     except HttpError as e:
         return False, (f"❌ Cannot access folder (HTTP {e.resp.status}). "
-                       f"Make sure the folder is shared with the service account.")
+                       f"Make sure the folder belongs to the Google account "
+                       f"you authorised when generating the refresh token.")
 
     # Folder rotation
     target_id, folder_label = _resolve_upload_folder(
@@ -947,9 +1060,9 @@ def _process_item(item: dict, bar_slot, msg_slot) -> dict:
 
             bar_slot.progress(100)
             data = final.read_bytes()
-            safec = item["course_name"][:30].replace(" ","_")
-            safeu = item["unit_number"].replace(" ","_").replace("|","")
-            fn    = f"SLC_Video_{safec}_{safeu}.mp4"
+            fn = _safe_filename(
+                f"SLC_Video_{item['course_name'][:30]}_{item['unit_number']}.mp4"
+            )
 
             item["status"]          = "done"
             item["result_data"]     = data
@@ -959,7 +1072,7 @@ def _process_item(item: dict, bar_slot, msg_slot) -> dict:
 
     except Exception as e:
         item["status"] = "failed"
-        item["error"]  = str(e)
+        item["error"]  = _sanitise_error(e)
 
     return item
 
@@ -967,6 +1080,12 @@ def _process_item(item: dict, bar_slot, msg_slot) -> dict:
 # ──────────────────────── SESSION STATE INIT ─────────────────────────────
 if "queue" not in st.session_state:
     st.session_state["queue"] = []
+
+# ──────────────────────── PASSWORD GATE ───────────────────────────────────
+# If APP_PASSWORD is set in secrets.toml, the rest of the app is blocked
+# until the user enters the correct password. Leave APP_PASSWORD blank to
+# run the app with open access (suitable only for local or trusted networks).
+_require_password()
 
 
 # ──────────────────────── CSS ─────────────────────────────────────────────
@@ -1013,7 +1132,7 @@ if GDRIVE_AVAILABLE:
     with st.expander("☁  Google Drive Connection",
                      expanded=not bool(_drive_service and GDRIVE_FOLDER_URL)):
         if _drive_service and GDRIVE_FOLDER_URL:
-            st.success("✅ Connected — videos will upload to the department Shared Drive folder.")
+            st.success("✅ Connected — videos will upload to your personal Google Drive folder.")
             st.caption(f"📂 Auto-rotation enabled: new subfolder every {FOLDER_MAX_ITEMS} videos")
             folder_id_preview = _extract_folder_id(GDRIVE_FOLDER_URL)
             if folder_id_preview:
@@ -1028,8 +1147,8 @@ if GDRIVE_AVAILABLE:
             except Exception as ex:
                 st.warning(
                     f"⚠️ Cannot reach folder yet: {ex}\n\n"
-                    "Make sure the folder is in a Workspace **Shared Drive** and is "
-                    "shared with the service account's `client_email` as Content manager."
+                    "Make sure `GDRIVE_FOLDER_URL` points to a folder owned by "
+                    "the Google account you used when generating the refresh token."
                 )
         elif not GDRIVE_FOLDER_URL:
             st.error("❌ `GDRIVE_FOLDER_URL` is not set in `.streamlit/secrets.toml`.")
@@ -1038,24 +1157,19 @@ if GDRIVE_AVAILABLE:
 ```toml
 GDRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/YOUR_FOLDER_ID"
 
-[gcp_service_account]
-type = "service_account"
-project_id = "..."
-private_key_id = "..."
-private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
-client_email = "...@....iam.gserviceaccount.com"
-client_id = "..."
-auth_uri = "https://accounts.google.com/o/oauth2/auth"
-token_uri = "https://oauth2.googleapis.com/token"
-auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
-client_x509_cert_url = "..."
-universe_domain = "googleapis.com"
+[gdrive_oauth]
+client_id     = "123456789-abc.apps.googleusercontent.com"
+client_secret = "GOCSPX-xxxxxxxxxxxxxxxxxxxx"
+refresh_token = "1//0gXXXXXXXXXXXXXXXXXXXXXXXXX"
 ```
+
+Run `get_refresh_token.py` once locally to obtain the `refresh_token` value.
             """)
         else:
             st.error(
-                "❌ Could not load service account credentials. "
-                "Check the `[gcp_service_account]` block in `.streamlit/secrets.toml`."
+                "❌ Could not load OAuth credentials. "
+                "Check the `[gdrive_oauth]` block in `.streamlit/secrets.toml`. "
+                "The `refresh_token` may be expired — re-run `get_refresh_token.py`."
             )
 else:
     _drive_service = None
@@ -1085,23 +1199,43 @@ with col_prev:
     if st.button("👁 Preview Intro", type="secondary", key="btn_preview"):
         if add_course and add_unit:
             with st.spinner("Rendering…"):
-                st.image(preview_frame(add_course, add_unit, ""), caption="Intro Preview", use_container_width=True)
+                st.image(
+                    preview_frame(
+                        _clean_text_field(add_course),
+                        _clean_text_field(add_unit),
+                        "",
+                    ),
+                    caption="Intro Preview", use_container_width=True,
+                )
         else:
             st.warning("Enter course name and unit number first.")
 
 with col_add:
     if st.button("➕ Add to Queue", type="primary", use_container_width=True, key="btn_add"):
-        if not add_course:
+        clean_course = _clean_text_field(add_course)
+        clean_unit   = _clean_text_field(add_unit)
+        if not clean_course:
             st.error("Enter a course name.")
-        elif not add_unit:
+        elif not clean_unit:
             st.error("Enter a unit number.")
         elif not add_vid:
             st.error("Upload a video file.")
         else:
-            item = _new_item(add_course, add_unit, add_vid.name, add_vid.getvalue())
-            st.session_state["queue"].append(item)
-            st.success(f"✅ **{add_vid.name}** added to queue ({item['size_mb']:.1f} MB)")
-            st.rerun()
+            video_bytes = add_vid.getvalue()
+            size_mb = len(video_bytes) / 1048576
+            if size_mb > MAX_UPLOAD_MB:
+                st.error(
+                    f"❌ File too large: {size_mb:.0f} MB. "
+                    f"Maximum allowed is {MAX_UPLOAD_MB} MB."
+                )
+            else:
+                item = _new_item(
+                    clean_course, clean_unit,
+                    _safe_filename(add_vid.name), video_bytes,
+                )
+                st.session_state["queue"].append(item)
+                st.success(f"✅ **{_esc(add_vid.name)}** added to queue ({size_mb:.1f} MB)")
+                st.rerun()
 
 st.markdown("---")
 
@@ -1149,9 +1283,9 @@ else:
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
               <span style="font-weight:700;color:rgba(255,255,255,.4);font-size:12px">#{idx+1}</span>
               {badge}
-              <span style="font-weight:600;color:#fff">{item['course_name']}</span>
-              <span style="color:rgba(96,204,190,.8);font-size:13px">{item['unit_number']}</span>
-              <span style="color:rgba(255,255,255,.35);font-size:12px">{item['orig_filename']} · {size_str}</span>
+              <span style="font-weight:600;color:#fff">{_esc(item['course_name'])}</span>
+              <span style="color:rgba(96,204,190,.8);font-size:13px">{_esc(item['unit_number'])}</span>
+              <span style="color:rgba(255,255,255,.35);font-size:12px">{_esc(item['orig_filename'])} · {_esc(size_str)}</span>
             </div>
         </div>""", unsafe_allow_html=True)
 
@@ -1197,7 +1331,8 @@ else:
                         else:
                             st.error(result)
                 else:
-                    st.markdown(f'<a href="{item["gd_url"]}" target="_blank" '
+                    _safe_url = item["gd_url"] if str(item["gd_url"]).startswith("https://") else "#"
+                    st.markdown(f'<a href="{_esc(_safe_url)}" target="_blank" rel="noopener noreferrer" '
                                 f'style="color:#50c878;font-size:13px">✅ On Google Drive</a>',
                                 unsafe_allow_html=True)
 
@@ -1309,6 +1444,7 @@ if done_items:
                                    use_container_width=True, key=f"dlp_{item['id']}")
             with c2:
                 if item.get("gd_url") and item["gd_url"] != "error":
-                    st.markdown(f'<a href="{item["gd_url"]}" target="_blank" '
+                    _safe_url = item["gd_url"] if str(item["gd_url"]).startswith("https://") else "#"
+                    st.markdown(f'<a href="{_esc(_safe_url)}" target="_blank" rel="noopener noreferrer" '
                                 f'style="color:#50c878">✅ View on Google Drive</a>',
                                 unsafe_allow_html=True)

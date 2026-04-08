@@ -1,6 +1,7 @@
 # Secrets
 .streamlit/secrets.toml
 .env
+get_refresh_token.py
 
 # Python
 __pycache__/

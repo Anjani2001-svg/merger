@@ -10,7 +10,7 @@ Drive quota. Run `get_refresh_token.py` once to capture the refresh token,
 then paste the values into .streamlit/secrets.toml.
 """
 
-import os, json, subprocess, tempfile, time, uuid, re, html, hmac, unicodedata
+import os, json, subprocess, tempfile, time, uuid, re, html, hmac, unicodedata, base64
 from pathlib import Path
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
@@ -607,7 +607,74 @@ def _detect_notebooklm_logo_cv(video_path, progress_cb=None):
         except: pass
 
 
+def _detect_fixed_top_badge(path, progress_cb=None):
+    """Fallback detector for the known top-centre Gemini/Notebook badge area.
+
+    Newer NotebookLM exports can show a ``Gemini Notebook`` wordmark on the
+    title card that is visually different from the persistent bottom-right
+    watermark. Template matching can therefore miss it. This detector checks
+    the known title-card badge region for dark, text-like pixels on a light
+    background and returns the fixed 1920x1080 cover box when present.
+    """
+    try:
+        src_w, src_h = _probe_resolution(path)
+    except Exception:
+        src_w, src_h = 1920, 1080
+
+    sx = src_w / 1920; sy = src_h / 1080
+    rx = max(0, int(WM_TOP_X * sx)); ry = max(0, int(WM_TOP_Y * sy))
+    rw = max(1, int(WM_TOP_W * sx)); rh = max(1, int(WM_TOP_H * sy))
+
+    best = None
+    # Check a few early frames in case the title card fades in.
+    for t in (0.25, 0.50, 1.00):
+        fd, tf = tempfile.mkstemp(suffix=".jpg"); os.close(fd)
+        try:
+            subprocess.run(["ffmpeg","-y","-ss",f"{t:.2f}","-i",str(path),
+                             "-vframes","1",tf], capture_output=True, timeout=8)
+            img = Image.open(tf).convert("RGB")
+            crop = np.array(img)[ry:ry+rh, rx:rx+rw]
+            if crop.size == 0:
+                continue
+            gray = crop.mean(axis=2)
+            dark_frac = float((gray < 180).mean())
+            very_dark_frac = float((gray < 110).mean())
+            bright_frac = float((gray > 210).mean())
+            # Weight near-black strokes more heavily; the faint Notebook grid
+            # remains above the dark thresholds and should not trigger this.
+            score = dark_frac + 0.5 * very_dark_frac
+            if best is None or score > best[0]:
+                best = (score, dark_frac, very_dark_frac, bright_frac, t)
+        except Exception:
+            continue
+        finally:
+            try: os.unlink(tf)
+            except OSError: pass
+
+    if best is None:
+        return None
+
+    _, dark_frac, very_dark_frac, bright_frac, sample_t = best
+    # The logo is black/dark text on a predominantly pale title-card area.
+    # A low threshold is deliberate because the wordmark occupies only a
+    # small part of this generously padded cover box.
+    present = bright_frac >= 0.50 and (dark_frac >= 0.012 or very_dark_frac >= 0.006)
+    if progress_cb:
+        progress_cb(
+            f"   Fallback badge check at {sample_t:.2f}s: "
+            f"dark={dark_frac:.3f}, bright={bright_frac:.3f}"
+        )
+    return (WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H) if present else None
+
+
 def _detect_top_watermark_end(path, max_scan=120.0, badge_box=None):
+    """Estimate when the opening top-centre badge disappears.
+
+    The old implementation compared the average colour of the whole box.
+    That can miss a small black wordmark disappearing from an otherwise white
+    background. We now track the pixels that are dark in the reference badge
+    itself, while retaining the old full-region comparison as a fallback.
+    """
     try:
         src_w, src_h = _probe_resolution(path)
     except Exception:
@@ -634,19 +701,60 @@ def _detect_top_watermark_end(path, max_scan=120.0, badge_box=None):
             try: os.unlink(tf)
             except OSError: pass
 
-    ref = _grab_region(0.0)
-    if ref is None or ref.size == 0: return 0.0
-    if (ref > 200).mean() < 0.60: return 0.0
-    total = _probe_duration(path); scan_end = min(max_scan, total - 2.0)
-    step = 0.5; t = step; last_t = 0.0
+    # 0.5 s is more reliable than frame 0 for title cards that fade in.
+    ref_t = 0.50
+    ref = _grab_region(ref_t)
+    if ref is None or ref.size == 0:
+        ref_t = 0.0
+        ref = _grab_region(ref_t)
+    if ref is None or ref.size == 0:
+        return 0.0
+
+    ref_gray = ref.mean(axis=2)
+    ref_dark = ref_gray < 185
+    dark_frac = float(ref_dark.mean())
+    bright_frac = float((ref_gray > 210).mean())
+    use_dark_tracking = dark_frac >= 0.008 and bright_frac >= 0.40
+
+    # Preserve the historical safety check for non-title-card regions when
+    # the reference does not contain a usable dark wordmark.
+    if not use_dark_tracking and (ref > 200).mean() < 0.60:
+        return 0.0
+
+    total = _probe_duration(path)
+    scan_end = min(max_scan, max(ref_t, total - 2.0))
+    step = 0.5
+    t = ref_t + step
+    last_present = ref_t
+    absent_run = 0
+
     while t <= scan_end:
         frame = _grab_region(t)
         if frame is not None and frame.size > 0:
-            diff = np.abs(frame - ref).mean()
-            if diff < 12: last_t = t
-            else: return last_t + step
+            if use_dark_tracking:
+                frame_gray = frame.mean(axis=2)
+                # How many pixels that formed the original wordmark are still
+                # dark in this frame? This is much more sensitive than a mean
+                # difference across the entire white rectangle.
+                retained = float((frame_gray[ref_dark] < 205).mean()) if ref_dark.any() else 0.0
+                current_dark = float((frame_gray < 185).mean())
+                present = retained >= 0.50 and current_dark >= dark_frac * 0.30
+            else:
+                diff = float(np.abs(frame - ref).mean())
+                present = diff < 12
+
+            if present:
+                last_present = t
+                absent_run = 0
+            else:
+                absent_run += 1
+                # Require two consecutive misses to avoid ending the cover on
+                # a single transition/fade frame.
+                if absent_run >= 2:
+                    return min(last_present + step, max_scan)
         t += step
-    return min(last_t + step, max_scan)
+
+    return min(last_present + step, max_scan)
 
 
 def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None):
@@ -683,9 +791,30 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
             Image.new("RGBA", (1920, 1080), (0,0,0,0)).save(str(top_png), "PNG")
             use_top = False; en_top = "0"
     else:
-        if progress_cb: progress_cb("   No front-page badge detected — skipping")
-        Image.new("RGBA", (1920, 1080), (0,0,0,0)).save(str(top_png), "PNG")
-        use_top = False; en_top = "0"
+        # Newer NotebookLM title cards may say "Gemini Notebook", which does
+        # not resemble the bottom-right watermark closely enough for template
+        # matching. Fall back to the known top-centre badge area instead of
+        # silently leaving the branding visible.
+        if progress_cb: progress_cb("   CV match not found — checking fixed Gemini/Notebook badge area…")
+        fallback_badge = _detect_fixed_top_badge(inp_str, progress_cb=progress_cb)
+        if fallback_badge:
+            badge_x, badge_y, badge_w, badge_h = fallback_badge
+            if progress_cb: progress_cb(f"   Fallback detected top badge at ({badge_x},{badge_y}) {badge_w}x{badge_h}")
+            if progress_cb: progress_cb("Detecting top watermark duration…")
+            top_end = _detect_top_watermark_end(inp_str, badge_box=fallback_badge)
+            if top_end > 0.5:
+                if progress_cb: progress_cb(f"   Badge visible until ~{top_end:.1f}s")
+                _make_box_png([(badge_x, badge_y, badge_w, badge_h, BOX_RADIUS)],
+                              top_png, colour=(249, 249, 249, 255))
+                use_top = True; en_top = f"lte(t\\,{top_end:.2f})"
+            else:
+                if progress_cb: progress_cb("   Fallback badge was too brief/uncertain — skipping")
+                Image.new("RGBA", (1920, 1080), (0,0,0,0)).save(str(top_png), "PNG")
+                use_top = False; en_top = "0"
+        else:
+            if progress_cb: progress_cb("   No front-page badge detected")
+            Image.new("RGBA", (1920, 1080), (0,0,0,0)).save(str(top_png), "PNG")
+            use_top = False; en_top = "0"
     if use_logo:
         comp_png = _make_logo_composite(logo_path=SLC_LOGO, box=(WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H))
         fc = ("[1:v]format=rgba[comp];[0:v][comp]overlay=x=0:y=0[v1];"

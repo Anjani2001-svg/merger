@@ -43,6 +43,7 @@ st.set_page_config(page_title="SLC Video Merger", page_icon="🎬", layout="wide
 BASE_DIR  = Path(__file__).parent
 INTRO_TPL = BASE_DIR / "assets" / "intro_template.mp4"
 SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
+GEMINI_NOTEBOOK_TEMPLATE = BASE_DIR / "assets" / "gemini_notebook_template.png"
 
 # ── Watermark / badge cover ───────────────────────────────────────────────
 WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1655, 960, 240, 72
@@ -758,6 +759,196 @@ def _detect_top_watermark_end(path, max_scan=120.0, badge_box=None):
 
 
 
+
+def _load_gemini_notebook_template():
+    """Load the dedicated Gemini Notebook wordmark template as grayscale."""
+    if not CV2_AVAILABLE or not GEMINI_NOTEBOOK_TEMPLATE.exists():
+        return None
+    tmpl = cv2.imread(str(GEMINI_NOTEBOOK_TEMPLATE), cv2.IMREAD_GRAYSCALE)
+    if tmpl is None or tmpl.size == 0:
+        return None
+    # Trim any near-white border so template matching focuses on the wordmark.
+    mask = tmpl < 245
+    ys, xs = np.where(mask)
+    if len(xs) and len(ys):
+        x0, x1 = max(0, int(xs.min()) - 3), min(tmpl.shape[1], int(xs.max()) + 4)
+        y0, y1 = max(0, int(ys.min()) - 3), min(tmpl.shape[0], int(ys.max()) + 4)
+        tmpl = tmpl[y0:y1, x0:x1]
+    return tmpl
+
+
+def _grab_cv_gray_frame(path, t):
+    """Extract one frame with FFmpeg and return it as an OpenCV grayscale image."""
+    fd, tf = tempfile.mkstemp(suffix=".jpg"); os.close(fd)
+    try:
+        subprocess.run([
+            "ffmpeg", "-y", "-ss", f"{t:.3f}", "-i", str(path),
+            "-vframes", "1", "-q:v", "2", tf,
+        ], capture_output=True, timeout=10)
+        frame = cv2.imread(tf, cv2.IMREAD_GRAYSCALE) if CV2_AVAILABLE else None
+        return frame
+    except Exception:
+        return None
+    finally:
+        try: os.unlink(tf)
+        except OSError: pass
+
+
+def _find_gemini_notebook_wordmark(path, progress_cb=None):
+    """Find the newer ``Gemini Notebook`` wordmark on the opening slide.
+
+    This uses a dedicated template for the current wordmark rather than trying
+    to reuse the old bottom-right NotebookLM watermark as a template.
+    Returns a dict with the matched 1920x1080 box, confidence, reference time,
+    and matched template size; otherwise returns None.
+    """
+    tmpl = _load_gemini_notebook_template()
+    if tmpl is None:
+        if progress_cb:
+            progress_cb("   Gemini Notebook template unavailable")
+        return None
+
+    try:
+        total = _probe_duration(str(path))
+    except Exception:
+        total = 10.0
+
+    best = None
+    sample_times = (0.15, 0.35, 0.60, 0.90, 1.20, 1.60, 2.00, 2.50, 3.00)
+    for t in sample_times:
+        if t >= total:
+            break
+        frame = _grab_cv_gray_frame(path, t)
+        if frame is None:
+            continue
+        fh, fw = frame.shape[:2]
+
+        # The opening wordmark is top-centre. Restricting the search reduces
+        # false matches against the large title text underneath it.
+        sx0, sx1 = int(fw * 0.25), int(fw * 0.75)
+        sy0, sy1 = 0, int(fh * 0.24)
+        roi = frame[sy0:sy1, sx0:sx1]
+        if roi.size == 0:
+            continue
+
+        for scale in np.arange(0.65, 1.81, 0.05):
+            tw = max(8, int(tmpl.shape[1] * scale))
+            th = max(6, int(tmpl.shape[0] * scale))
+            if tw >= roi.shape[1] or th >= roi.shape[0]:
+                continue
+            rt = cv2.resize(tmpl, (tw, th), interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC)
+            res = cv2.matchTemplate(roi, rt, cv2.TM_CCOEFF_NORMED)
+            _, val, _, loc = cv2.minMaxLoc(res)
+            if best is None or val > best[0]:
+                x = sx0 + loc[0]
+                y = sy0 + loc[1]
+                best = (float(val), t, x, y, tw, th, fw, fh)
+
+    # This threshold is intentionally lower than the old NotebookLM matcher:
+    # the template is taken from a browser-rendered example and may be scaled
+    # or antialiased slightly differently in raw NotebookLM exports.
+    if best is None or best[0] < 0.43:
+        if progress_cb and best is not None:
+            progress_cb(f"   Gemini wordmark template best confidence={best[0]:.2f} — fallback cover will be used")
+        return None
+
+    val, t, x, y, w, h, fw, fh = best
+    to1920x = 1920.0 / fw
+    to1080y = 1080.0 / fh
+    box = (
+        int(x * to1920x), int(y * to1080y),
+        max(1, int(w * to1920x)), max(1, int(h * to1080y)),
+    )
+    if progress_cb:
+        progress_cb(
+            f"   ✅ Gemini Notebook detected at {t:.2f}s "
+            f"conf={val:.2f} box={box[0]},{box[1]} {box[2]}x{box[3]}"
+        )
+    return {
+        "box": box,
+        "confidence": val,
+        "time": t,
+        "template_size": (w, h),
+        "frame_size": (fw, fh),
+    }
+
+
+def _track_gemini_notebook_end(path, match, progress_cb=None, max_scan=60.0):
+    """Track the dedicated Gemini Notebook wordmark until it disappears."""
+    if not CV2_AVAILABLE or not match:
+        return None
+    tmpl = _load_gemini_notebook_template()
+    if tmpl is None:
+        return None
+
+    try:
+        total = _probe_duration(str(path))
+    except Exception:
+        return None
+
+    fw0, fh0 = match["frame_size"]
+    mw, mh = match["template_size"]
+    # Resize the source template to the exact size that produced the best hit.
+    rt = cv2.resize(tmpl, (mw, mh), interpolation=cv2.INTER_CUBIC)
+
+    bx, by, bw, bh = match["box"]
+    # Convert the 1920x1080 match back to the extraction frame coordinate space.
+    x = int(bx * fw0 / 1920.0)
+    y = int(by * fh0 / 1080.0)
+    w = max(1, int(bw * fw0 / 1920.0))
+    h = max(1, int(bh * fh0 / 1080.0))
+
+    step = 0.40
+    t = max(0.0, match["time"])
+    scan_end = min(max_scan, total)
+    last_present = t
+    absent_run = 0
+    seen = False
+    threshold = max(0.34, min(0.48, match["confidence"] * 0.58))
+
+    while t <= scan_end:
+        frame = _grab_cv_gray_frame(path, t)
+        if frame is not None:
+            fh, fw = frame.shape[:2]
+            # Recalculate from normalized coordinates in case extraction reports
+            # a slightly different frame size.
+            cx = int(bx * fw / 1920.0)
+            cy = int(by * fh / 1080.0)
+            cw = max(1, int(bw * fw / 1920.0))
+            ch = max(1, int(bh * fh / 1080.0))
+            pad_x = max(30, int(cw * 0.35))
+            pad_y = max(18, int(ch * 0.90))
+            x0, y0 = max(0, cx-pad_x), max(0, cy-pad_y)
+            x1, y1 = min(fw, cx+cw+pad_x), min(fh, cy+ch+pad_y)
+            roi = frame[y0:y1, x0:x1]
+
+            val = 0.0
+            if roi.shape[0] >= rt.shape[0] and roi.shape[1] >= rt.shape[1]:
+                res = cv2.matchTemplate(roi, rt, cv2.TM_CCOEFF_NORMED)
+                _, val, _, _ = cv2.minMaxLoc(res)
+
+            present = val >= threshold
+            if present:
+                seen = True
+                last_present = t
+                absent_run = 0
+            elif seen:
+                absent_run += 1
+                # Require three consecutive misses so fades do not expose the
+                # wordmark for a few frames.
+                if absent_run >= 3:
+                    end_t = min(total, last_present + step * 1.5)
+                    if progress_cb:
+                        progress_cb(f"   Gemini Notebook disappears at ~{end_t:.1f}s")
+                    return end_t
+        t += step
+
+    if seen:
+        if progress_cb:
+            progress_cb(f"   Gemini Notebook remains visible — covering through {scan_end:.1f}s")
+        return min(scan_end, total)
+    return None
+
 def _detect_fixed_badge_end_guaranteed(path, progress_cb=None, max_scan=60.0):
     """Track the first-page Gemini/Notebook wordmark in its known top-centre area.
 
@@ -911,30 +1102,58 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
         if progress_cb: progress_cb("   No end card to trim")
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
-    # --- Guaranteed first-page Gemini / Notebook logo cover ---
-    # Do not make the cover conditional on OpenCV template matching. Newer
-    # NotebookLM exports use a different "Gemini Notebook" wordmark, and a
-    # false positive/false negative CV result could previously skip the real
-    # logo. We always cover the known top-centre branding region and only use
-    # pixel tracking to decide when that cover should stop.
+    # --- Current Gemini Notebook opening-wordmark cover ---
+    # The old implementation tried to identify the opening badge by comparing
+    # it with the persistent NotebookLM watermark. Google now renders the
+    # opening brand as "Gemini Notebook", so we match that wordmark directly.
     if progress_cb:
-        progress_cb("Covering first-page Gemini/Notebook logo…")
+        progress_cb("Detecting current Gemini Notebook opening wordmark…")
     top_png = tmp / "wm_top.png"
-    top_end = _detect_fixed_badge_end_guaranteed(inp_str, progress_cb=progress_cb)
-    if top_end <= 0:
-        top_end = min(12.0, duration)
+
+    gemini_match = _find_gemini_notebook_wordmark(inp_str, progress_cb=progress_cb)
+    if gemini_match:
+        gx, gy, gw, gh = gemini_match["box"]
+        # Generous padding removes the icon, all lettering, and antialiased edge
+        # pixels while avoiding the large title below.
+        pad_x, pad_y = 28, 18
+        cover_x = max(0, gx - pad_x)
+        cover_y = max(0, gy - pad_y)
+        cover_w = min(1920 - cover_x, gw + pad_x * 2)
+        cover_h = min(1080 - cover_y, gh + pad_y * 2)
+        top_end = _track_gemini_notebook_end(
+            inp_str, gemini_match, progress_cb=progress_cb, max_scan=60.0
+        )
+        if top_end is None or top_end <= 0:
+            top_end = _detect_fixed_badge_end_guaranteed(
+                inp_str, progress_cb=progress_cb, max_scan=60.0
+            )
+        if top_end is None or top_end <= 0:
+            top_end = min(15.0, duration)
+        if progress_cb:
+            progress_cb(
+                f"   ✅ Gemini-specific cover active to ~{top_end:.1f}s "
+                f"at ({cover_x},{cover_y}) {cover_w}x{cover_h}"
+            )
+    else:
+        # Safety fallback for a future rebrand or a low-confidence match.
+        cover_x, cover_y, cover_w, cover_h = WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H
+        top_end = _detect_fixed_badge_end_guaranteed(
+            inp_str, progress_cb=progress_cb, max_scan=60.0
+        )
+        if top_end is None or top_end <= 0:
+            top_end = min(15.0, duration)
+        if progress_cb:
+            progress_cb(
+                f"   ⚠️ Gemini template not matched — fallback cover active to ~{top_end:.1f}s"
+            )
+
     _make_box_png(
-        [(WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H, BOX_RADIUS)],
+        [(cover_x, cover_y, cover_w, cover_h, BOX_RADIUS)],
         top_png,
         colour=(249, 249, 249, 255),
     )
     use_top = True
     en_top = f"between(t\\,0\\,{top_end:.2f})"
-    if progress_cb:
-        progress_cb(
-            f"   ✅ Guaranteed top-centre cover active to ~{top_end:.1f}s "
-            f"at ({WM_TOP_X},{WM_TOP_Y}) {WM_TOP_W}x{WM_TOP_H}"
-        )
     if use_logo:
         comp_png = _make_logo_composite(logo_path=SLC_LOGO, box=(WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H))
         fc = ("[1:v]format=rgba[comp];[0:v][comp]overlay=x=0:y=0[v1];"
@@ -1368,7 +1587,7 @@ st.markdown("""<div style="display:flex;align-items:center;gap:16px;margin-botto
   <span style="background:#60ccbe;color:#0a2a3c;font-size:11px;font-weight:700;
         padding:3px 12px;border-radius:20px;text-transform:uppercase">Queue</span>
   <span style="background:rgba(255,255,255,.10);color:#d8f6f1;font-size:10px;font-weight:700;
-        padding:3px 10px;border-radius:20px">TOP LOGO FIX V2</span>
+        padding:3px 10px;border-radius:20px">GEMINI NOTEBOOK FIX V3</span>
 </div>""", unsafe_allow_html=True)
 st.markdown("""<div style="text-align:center;margin:8px 0 24px">
   <span class="fb">🎬 Custom Intro</span><span class="fa">→</span>

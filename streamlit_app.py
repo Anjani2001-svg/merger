@@ -46,7 +46,7 @@ SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 
 # ── Watermark / badge cover ───────────────────────────────────────────────
 WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1655, 960, 240, 72
-WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H = 760, 48, 390, 72
+WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H = 700, 36, 520, 110
 
 BOX_RADIUS = 10
 WM_EC_X, WM_EC_Y, WM_EC_W, WM_EC_H = 448, 310, 1024, 420
@@ -757,6 +757,145 @@ def _detect_top_watermark_end(path, max_scan=120.0, badge_box=None):
     return min(last_present + step, max_scan)
 
 
+
+def _detect_fixed_badge_end_guaranteed(path, progress_cb=None, max_scan=60.0):
+    """Track the first-page Gemini/Notebook wordmark in its known top-centre area.
+
+    This deliberately does *not* depend on the bottom-right watermark or on
+    OpenCV finding the same logo elsewhere.  We take the actual pixels from
+    the known top-centre wordmark area on an early frame and track those dark
+    strokes until they disappear.  If tracking is uncertain, a conservative
+    fallback duration is returned so the branding is still covered.
+    """
+    try:
+        total = _probe_duration(str(path))
+    except Exception:
+        total = 12.0
+
+    try:
+        src_w, src_h = _probe_resolution(str(path))
+    except Exception:
+        src_w, src_h = 1920, 1080
+
+    sx = src_w / 1920.0
+    sy = src_h / 1080.0
+
+    # The cover is intentionally generous.  Detection uses a slightly tighter
+    # inner region so large nearby title text cannot influence the tracker.
+    cx = max(0, int(WM_TOP_X * sx))
+    cy = max(0, int(WM_TOP_Y * sy))
+    cw = max(1, int(WM_TOP_W * sx))
+    ch = max(1, int(WM_TOP_H * sy))
+
+    inset_x = int(45 * sx)
+    inset_y = int(10 * sy)
+    rx = cx + inset_x
+    ry = cy + inset_y
+    rw = max(1, cw - 2 * inset_x)
+    rh = max(1, ch - 2 * inset_y)
+
+    def _grab_gray(t):
+        fd, tf = tempfile.mkstemp(suffix='.jpg'); os.close(fd)
+        try:
+            subprocess.run([
+                'ffmpeg', '-y', '-ss', f'{t:.2f}', '-i', str(path),
+                '-vframes', '1', '-q:v', '2', tf
+            ], capture_output=True, timeout=10)
+            img = Image.open(tf).convert('L')
+            arr = np.asarray(img)
+            crop = arr[ry:ry+rh, rx:rx+rw]
+            return crop.astype(np.float32) if crop.size else None
+        except Exception:
+            return None
+        finally:
+            try: os.unlink(tf)
+            except OSError: pass
+
+    # Pick the early frame containing the strongest black wordmark.  This is
+    # robust to a short fade-in at the beginning of NotebookLM exports.
+    best = None
+    for t in (0.20, 0.40, 0.60, 0.80, 1.00, 1.25):
+        if t >= total:
+            break
+        g = _grab_gray(t)
+        if g is None:
+            continue
+        dark = g < 165
+        very_dark = g < 105
+        score = float(dark.mean()) + 0.75 * float(very_dark.mean())
+        if best is None or score > best[0]:
+            best = (score, t, g)
+
+    # Guaranteed behaviour: if frame analysis fails, still cover the opening
+    # for a sensible period rather than silently leaving the brand visible.
+    fallback_end = min(max(2.0, total * 0.12), 12.0, total)
+    if best is None:
+        if progress_cb:
+            progress_cb(f'   Top-logo tracking unavailable — forcing cover for {fallback_end:.1f}s')
+        return fallback_end
+
+    _, ref_t, ref = best
+    # Focus only on truly dark strokes.  The NotebookLM grid/background is
+    # much lighter, so it does not become part of the tracking mask.
+    ref_mask = ref < 165
+    ref_very_dark = ref < 105
+    ink_frac = float(ref_mask.mean())
+    very_dark_frac = float(ref_very_dark.mean())
+
+    if progress_cb:
+        progress_cb(
+            f'   Fixed top-logo reference at {ref_t:.2f}s '
+            f'(dark={ink_frac:.3f}, very-dark={very_dark_frac:.3f})'
+        )
+
+    if ink_frac < 0.0025 and very_dark_frac < 0.0010:
+        if progress_cb:
+            progress_cb(f'   Wordmark pixels were faint — forcing cover for {fallback_end:.1f}s')
+        return fallback_end
+
+    scan_end = min(max_scan, total)
+    step = 0.40
+    t = ref_t + step
+    last_present = ref_t
+    absent_run = 0
+
+    while t <= scan_end:
+        g = _grab_gray(t)
+        if g is not None and g.shape == ref.shape:
+            # Percentage of pixels that formed the original black wordmark and
+            # are still dark now.  This directly tracks the actual opening logo.
+            retained = float((g[ref_mask] < 195).mean()) if ref_mask.any() else 0.0
+            retained_vdark = float((g[ref_very_dark] < 165).mean()) if ref_very_dark.any() else retained
+            current_ink = float((g < 175).mean())
+
+            present = (
+                (retained >= 0.42 or retained_vdark >= 0.48)
+                and current_ink >= max(0.0015, ink_frac * 0.18)
+            )
+
+            if present:
+                last_present = t
+                absent_run = 0
+            else:
+                absent_run += 1
+                # Three misses (~1.2 s) prevents a fade/transition frame from
+                # ending the cover too early.
+                if absent_run >= 3:
+                    end_t = min(last_present + step, total)
+                    # Never return a sub-second cover for a recognised badge.
+                    end_t = max(end_t, min(2.0, total))
+                    if progress_cb:
+                        progress_cb(f'   Fixed top logo disappears at ~{end_t:.1f}s')
+                    return end_t
+        t += step
+
+    # If the logo remains detectable throughout the scan, keep the cover for
+    # that entire period. This is safer than exposing NotebookLM branding.
+    end_t = min(scan_end, total)
+    if progress_cb:
+        progress_cb(f'   Fixed top logo remains visible — covering through {end_t:.1f}s')
+    return end_t
+
 def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None):
     inp_str, out_str = str(inp), str(out)
     if progress_cb: progress_cb("Detecting end-card start time…")
@@ -772,49 +911,30 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
         if progress_cb: progress_cb("   No end card to trim")
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
-    # --- OpenCV logo detection for front-page badge ---
-    if progress_cb: progress_cb("Detecting front-page logo with OpenCV…")
-    cv_badge = _detect_notebooklm_logo_cv(inp_str, progress_cb=progress_cb)
+    # --- Guaranteed first-page Gemini / Notebook logo cover ---
+    # Do not make the cover conditional on OpenCV template matching. Newer
+    # NotebookLM exports use a different "Gemini Notebook" wordmark, and a
+    # false positive/false negative CV result could previously skip the real
+    # logo. We always cover the known top-centre branding region and only use
+    # pixel tracking to decide when that cover should stop.
+    if progress_cb:
+        progress_cb("Covering first-page Gemini/Notebook logo…")
     top_png = tmp / "wm_top.png"
-    if cv_badge:
-        badge_x, badge_y, badge_w, badge_h = cv_badge
-        if progress_cb: progress_cb(f"   CV detected badge at ({badge_x},{badge_y}) {badge_w}x{badge_h}")
-        if progress_cb: progress_cb("Detecting top watermark duration…")
-        top_end = _detect_top_watermark_end(inp_str, badge_box=(badge_x, badge_y, badge_w, badge_h))
-        if top_end > 0.5:
-            if progress_cb: progress_cb(f"   Badge visible until ~{top_end:.1f}s")
-            _make_box_png([(badge_x, badge_y, badge_w, badge_h, BOX_RADIUS)],
-                          top_png, colour=(249, 249, 249, 255))
-            use_top = True; en_top = f"lte(t\\,{top_end:.2f})"
-        else:
-            if progress_cb: progress_cb("   Badge not visible long enough — skipping")
-            Image.new("RGBA", (1920, 1080), (0,0,0,0)).save(str(top_png), "PNG")
-            use_top = False; en_top = "0"
-    else:
-        # Newer NotebookLM title cards may say "Gemini Notebook", which does
-        # not resemble the bottom-right watermark closely enough for template
-        # matching. Fall back to the known top-centre badge area instead of
-        # silently leaving the branding visible.
-        if progress_cb: progress_cb("   CV match not found — checking fixed Gemini/Notebook badge area…")
-        fallback_badge = _detect_fixed_top_badge(inp_str, progress_cb=progress_cb)
-        if fallback_badge:
-            badge_x, badge_y, badge_w, badge_h = fallback_badge
-            if progress_cb: progress_cb(f"   Fallback detected top badge at ({badge_x},{badge_y}) {badge_w}x{badge_h}")
-            if progress_cb: progress_cb("Detecting top watermark duration…")
-            top_end = _detect_top_watermark_end(inp_str, badge_box=fallback_badge)
-            if top_end > 0.5:
-                if progress_cb: progress_cb(f"   Badge visible until ~{top_end:.1f}s")
-                _make_box_png([(badge_x, badge_y, badge_w, badge_h, BOX_RADIUS)],
-                              top_png, colour=(249, 249, 249, 255))
-                use_top = True; en_top = f"lte(t\\,{top_end:.2f})"
-            else:
-                if progress_cb: progress_cb("   Fallback badge was too brief/uncertain — skipping")
-                Image.new("RGBA", (1920, 1080), (0,0,0,0)).save(str(top_png), "PNG")
-                use_top = False; en_top = "0"
-        else:
-            if progress_cb: progress_cb("   No front-page badge detected")
-            Image.new("RGBA", (1920, 1080), (0,0,0,0)).save(str(top_png), "PNG")
-            use_top = False; en_top = "0"
+    top_end = _detect_fixed_badge_end_guaranteed(inp_str, progress_cb=progress_cb)
+    if top_end <= 0:
+        top_end = min(12.0, duration)
+    _make_box_png(
+        [(WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H, BOX_RADIUS)],
+        top_png,
+        colour=(249, 249, 249, 255),
+    )
+    use_top = True
+    en_top = f"between(t\\,0\\,{top_end:.2f})"
+    if progress_cb:
+        progress_cb(
+            f"   ✅ Guaranteed top-centre cover active to ~{top_end:.1f}s "
+            f"at ({WM_TOP_X},{WM_TOP_Y}) {WM_TOP_W}x{WM_TOP_H}"
+        )
     if use_logo:
         comp_png = _make_logo_composite(logo_path=SLC_LOGO, box=(WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H))
         fc = ("[1:v]format=rgba[comp];[0:v][comp]overlay=x=0:y=0[v1];"
@@ -1247,6 +1367,8 @@ st.markdown("""<div style="display:flex;align-items:center;gap:16px;margin-botto
   <h1 style="margin:0;font-size:28px">🎬 SLC Video Merger</h1>
   <span style="background:#60ccbe;color:#0a2a3c;font-size:11px;font-weight:700;
         padding:3px 12px;border-radius:20px;text-transform:uppercase">Queue</span>
+  <span style="background:rgba(255,255,255,.10);color:#d8f6f1;font-size:10px;font-weight:700;
+        padding:3px 10px;border-radius:20px">TOP LOGO FIX V2</span>
 </div>""", unsafe_allow_html=True)
 st.markdown("""<div style="text-align:center;margin:8px 0 24px">
   <span class="fb">🎬 Custom Intro</span><span class="fa">→</span>

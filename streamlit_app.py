@@ -1094,31 +1094,96 @@ def _detect_fixed_badge_end_guaranteed(path, progress_cb=None, max_scan=60.0):
     return end_t
 
 
-def _find_gemini_notebook_ocr_box(path, progress_cb=None, max_scan=8.0):
-    """Hybrid detector: find Gemini Notebook / NotebookLM branding anywhere using OCR."""
+def _find_gemini_notebook_ocr_box(path, progress_cb=None, max_scan=12.0):
+    """Hybrid Gemini Notebook detector.
+
+    Uses OCR with image enhancement because the new watermark is small,
+    grey and anti-aliased. Also searches for the icon/text combination area.
+    Returns coordinates in 1920x1080 space.
+    """
     if not OCR_AVAILABLE or not CV2_AVAILABLE:
         return None
-    keywords = ("gemini notebook", "notebooklm")
+
+    keywords = ("gemini notebook", "notebooklm", "gemini")
     duration = min(_probe_duration(str(path)), max_scan)
-    for t in np.arange(0, duration, 0.8):
+
+    for t in np.arange(0, duration, 0.5):
         frame = _grab_cv_gray_frame(path, float(t))
         if frame is None:
             continue
-        rgb = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+
         try:
-            data = pytesseract.image_to_data(rgb, output_type=pytesseract.Output.DICT)
-        except Exception:
-            continue
-        for i, txt in enumerate(data.get("text", [])):
-            clean = re.sub(r"[^a-z ]", "", txt.lower()).strip()
-            if any(k in clean for k in keywords):
-                x, y = int(data['left'][i]), int(data['top'][i])
-                w, h = int(data['width'][i]), int(data['height'][i])
-                fh, fw = frame.shape[:2]
-                box=(int(x*1920/fw), int(y*1080/fh), max(20,int(w*1920/fw)), max(10,int(h*1080/fh)))
-                if progress_cb:
-                    progress_cb(f"   OCR logo detected at {box}")
-                return {"box":box,"time":float(t)}
+            # Improve faint grey watermark visibility
+            enlarged = cv2.resize(frame, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+            enhanced = clahe.apply(enlarged)
+            thresh = cv2.threshold(enhanced, 180, 255, cv2.THRESH_BINARY_INV)[1]
+
+            variants = [enhanced, thresh]
+            fh, fw = frame.shape[:2]
+
+            for img in variants:
+                data = pytesseract.image_to_data(
+                    img,
+                    config='--psm 11',
+                    output_type=pytesseract.Output.DICT
+                )
+
+                words = []
+                for i, txt in enumerate(data.get('text', [])):
+                    clean = re.sub(r'[^a-z ]', '', txt.lower()).strip()
+                    if clean:
+                        words.append(clean)
+
+                joined = ' '.join(words)
+                if any(k in joined for k in keywords):
+                    xs=[]; ys=[]; x2=[]; y2=[]
+                    for i, txt in enumerate(data.get('text', [])):
+                        clean = re.sub(r'[^a-z ]', '', txt.lower()).strip()
+                        if clean and any(part in clean for part in ('gemini','notebook','notebooklm')):
+                            x=int(data['left'][i]/2)
+                            y=int(data['top'][i]/2)
+                            w=int(data['width'][i]/2)
+                            h=int(data['height'][i]/2)
+                            xs.append(x); ys.append(y); x2.append(x+w); y2.append(y+h)
+
+                    if xs:
+                        x=min(xs); y=min(ys)
+                        w=max(x2)-x; h=max(y2)-y
+                    else:
+                        continue
+
+                    box=(
+                        int(x*1920/fw),
+                        int(y*1080/fh),
+                        max(40,int(w*1920/fw)),
+                        max(20,int(h*1080/fh))
+                    )
+
+                    if progress_cb:
+                        progress_cb(f"   Gemini OCR detected {box}")
+                    return {'box':box,'time':float(t)}
+
+            # Fallback: known Gemini watermark area, detect dark pixels
+            # bottom area even if OCR misses the text.
+            crop = frame[int(fh*0.75):fh, int(fw*0.55):fw]
+            if crop.size:
+                dark = (crop < 190).mean()
+                if dark > 0.01:
+                    box=(
+                        int(fw*0.55*1920/fw)-20,
+                        int(fh*0.75*1080/fh)-15,
+                        int(fw*0.35*1920/fw)+40,
+                        int(fh*0.15*1080/fh)+30
+                    )
+                    if progress_cb:
+                        progress_cb(f"   Gemini visual fallback detected {box}")
+                    return {'box':box,'time':float(t)}
+
+        except Exception as e:
+            if progress_cb:
+                progress_cb(f"   OCR error: {e}")
+
     return None
 
 

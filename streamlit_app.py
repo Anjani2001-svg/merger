@@ -1094,31 +1094,96 @@ def _detect_fixed_badge_end_guaranteed(path, progress_cb=None, max_scan=60.0):
     return end_t
 
 
-def _find_gemini_notebook_ocr_box(path, progress_cb=None, max_scan=8.0):
-    """Hybrid detector: find Gemini Notebook / NotebookLM branding anywhere using OCR."""
+def _find_gemini_notebook_ocr_box(path, progress_cb=None, max_scan=12.0):
+    """Hybrid Gemini Notebook detector.
+
+    Uses OCR with image enhancement because the new watermark is small,
+    grey and anti-aliased. Also searches for the icon/text combination area.
+    Returns coordinates in 1920x1080 space.
+    """
     if not OCR_AVAILABLE or not CV2_AVAILABLE:
         return None
-    keywords = ("gemini notebook", "notebooklm")
+
+    keywords = ("gemini notebook", "notebooklm", "gemini")
     duration = min(_probe_duration(str(path)), max_scan)
-    for t in np.arange(0, duration, 0.8):
+
+    for t in np.arange(0, duration, 0.5):
         frame = _grab_cv_gray_frame(path, float(t))
         if frame is None:
             continue
-        rgb = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+
         try:
-            data = pytesseract.image_to_data(rgb, output_type=pytesseract.Output.DICT)
-        except Exception:
-            continue
-        for i, txt in enumerate(data.get("text", [])):
-            clean = re.sub(r"[^a-z ]", "", txt.lower()).strip()
-            if any(k in clean for k in keywords):
-                x, y = int(data['left'][i]), int(data['top'][i])
-                w, h = int(data['width'][i]), int(data['height'][i])
-                fh, fw = frame.shape[:2]
-                box=(int(x*1920/fw), int(y*1080/fh), max(20,int(w*1920/fw)), max(10,int(h*1080/fh)))
-                if progress_cb:
-                    progress_cb(f"   OCR logo detected at {box}")
-                return {"box":box,"time":float(t)}
+            # Improve faint grey watermark visibility
+            enlarged = cv2.resize(frame, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+            enhanced = clahe.apply(enlarged)
+            thresh = cv2.threshold(enhanced, 180, 255, cv2.THRESH_BINARY_INV)[1]
+
+            variants = [enhanced, thresh]
+            fh, fw = frame.shape[:2]
+
+            for img in variants:
+                data = pytesseract.image_to_data(
+                    img,
+                    config='--psm 11',
+                    output_type=pytesseract.Output.DICT
+                )
+
+                words = []
+                for i, txt in enumerate(data.get('text', [])):
+                    clean = re.sub(r'[^a-z ]', '', txt.lower()).strip()
+                    if clean:
+                        words.append(clean)
+
+                joined = ' '.join(words)
+                if any(k in joined for k in keywords):
+                    xs=[]; ys=[]; x2=[]; y2=[]
+                    for i, txt in enumerate(data.get('text', [])):
+                        clean = re.sub(r'[^a-z ]', '', txt.lower()).strip()
+                        if clean and any(part in clean for part in ('gemini','notebook','notebooklm')):
+                            x=int(data['left'][i]/2)
+                            y=int(data['top'][i]/2)
+                            w=int(data['width'][i]/2)
+                            h=int(data['height'][i]/2)
+                            xs.append(x); ys.append(y); x2.append(x+w); y2.append(y+h)
+
+                    if xs:
+                        x=min(xs); y=min(ys)
+                        w=max(x2)-x; h=max(y2)-y
+                    else:
+                        continue
+
+                    box=(
+                        int(x*1920/fw),
+                        int(y*1080/fh),
+                        max(40,int(w*1920/fw)),
+                        max(20,int(h*1080/fh))
+                    )
+
+                    if progress_cb:
+                        progress_cb(f"   Gemini OCR detected {box}")
+                    return {'box':box,'time':float(t)}
+
+            # Fallback: known Gemini watermark area, detect dark pixels
+            # bottom area even if OCR misses the text.
+            crop = frame[int(fh*0.75):fh, int(fw*0.55):fw]
+            if crop.size:
+                dark = (crop < 190).mean()
+                if dark > 0.01:
+                    box=(
+                        int(fw*0.55*1920/fw)-20,
+                        int(fh*0.75*1080/fh)-15,
+                        int(fw*0.35*1920/fw)+40,
+                        int(fh*0.15*1080/fh)+30
+                    )
+                    if progress_cb:
+                        progress_cb(f"   Gemini visual fallback detected {box}")
+                    return {'box':box,'time':float(t)}
+
+        except Exception as e:
+            if progress_cb:
+                progress_cb(f"   OCR error: {e}")
+
     return None
 
 
@@ -1158,7 +1223,12 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
         if progress_cb:
             progress_cb(f"   OCR cover active to ~{top_end:.1f}s")
     else:
-        gemini_match = _find_gemini_notebook_wordmark(inp_str, progress_cb=progress_cb)
+        # Template matching disabled for new Gemini Notebook exports.
+        # The watermark rendering changes between exports, resolutions and
+        # Google UI versions, so OCR/visual detection is used instead.
+        gemini_match = None
+        if progress_cb:
+            progress_cb("   Gemini template matching skipped - using dynamic detection only")
     if gemini_match:
         gx, gy, gw, gh = gemini_match["box"]
         # Generous padding removes the icon, all lettering, and antialiased edge
@@ -1228,31 +1298,36 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
 
 
 def add_notebooklm_transition(intro, main, out, duration=1.0, direction="left"):
-    tm = {"left":"wipeleft","right":"wiperight","up":"wipeup","down":"wipedown"}
-    wipe = tm.get(direction,"wipeleft"); intro_d = _probe_duration(intro)
-    half = max(0.25, min(duration/2, intro_d-0.05))
-    cc = ("color=c=0x7B2CBF:s=1920x1080:r=30,"
-          "drawbox=x=0:y=0:w=576:h=1080:color=0x7B2CBF:t=fill,"
-          "drawbox=x=576:y=0:w=461:h=1080:color=0x4285F4:t=fill,"
-          "drawbox=x=1037:y=0:w=346:h=1080:color=0x7EDFC3:t=fill,"
-          "drawbox=x=1383:y=0:w=537:h=1080:color=0xB7E4C7:t=fill")
-    _ff(["ffmpeg","-y","-i",str(intro),"-i",str(main),
-         "-f","lavfi","-t",f"{duration}","-i",cc,
-         "-f","lavfi","-t",f"{duration}","-i","anullsrc=r=48000:cl=stereo",
-         "-filter_complex",
-         "[0:v]fps=30,format=yuv420p,settb=AVTB[v0];"
-         "[1:v]fps=30,format=yuv420p,settb=AVTB[v1];"
-         "[2:v]fps=30,format=yuv420p,settb=AVTB[vc];"
-         f"[v0][vc]xfade=transition={wipe}:duration={half}:offset={max(intro_d-half,0):.3f}[vx];"
-         f"[vx][v1]xfade=transition={wipe}:duration={half}:offset={intro_d:.3f}[vout];"
-         f"[0:a][3:a]acrossfade=d={half}:c1=tri:c2=tri[ax];"
-         f"[ax][1:a]acrossfade=d={half}:c1=tri:c2=tri[aout]",
-         "-map","[vout]","-map","[aout]",
-         "-c:v","libx264","-preset","ultrafast","-crf","23",
-         "-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
-         "-r","30","-pix_fmt","yuv420p",str(out)], timeout=180)
-    return Path(out)
+    """
+    Reliable transition between intro and main video.
+    Uses concat instead of xfade/lavfi to avoid FFmpeg filter failures
+    on Streamlit/cloud environments.
+    """
 
+    _ff([
+        "ffmpeg",
+        "-y",
+        "-i", str(intro),
+        "-i", str(main),
+        "-filter_complex",
+        "[0:v]fps=30,format=yuv420p[v0];"
+        "[1:v]fps=30,format=yuv420p[v1];"
+        "[v0][v1]concat=n=2:v=1:a=0[vout]",
+        "-map", "[vout]",
+        "-map", "0:a?",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "23",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-ar", "48000",
+        "-ac", "2",
+        "-r", "30",
+        "-pix_fmt", "yuv420p",
+        str(out)
+    ], timeout=180)
+
+    return Path(out)
 
 def concat(parts, out, tmp):
     lst = tmp/"list.txt"

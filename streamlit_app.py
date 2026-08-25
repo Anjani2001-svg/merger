@@ -1301,11 +1301,7 @@ def add_notebooklm_transition(intro, main, out, duration=1.0, direction="left"):
     tm = {"left":"wipeleft","right":"wiperight","up":"wipeup","down":"wipedown"}
     wipe = tm.get(direction,"wipeleft"); intro_d = _probe_duration(intro)
     half = max(0.25, min(duration/2, intro_d-0.05))
-    cc = ("color=c=0x7B2CBF:s=1920x1080:r=30,"
-          "drawbox=x=0:y=0:w=576:h=1080:color=0x7B2CBF:t=fill,"
-          "drawbox=x=576:y=0:w=461:h=1080:color=0x4285F4:t=fill,"
-          "drawbox=x=1037:y=0:w=346:h=1080:color=0x7EDFC3:t=fill,"
-          "drawbox=x=1383:y=0:w=537:h=1080:color=0xB7E4C7:t=fill")
+    cc = "color=c=black:s=1920x1080:r=30"
     _ff(["ffmpeg","-y","-i",str(intro),"-i",str(main),
          "-f","lavfi","-t",f"{duration}","-i",cc,
          "-f","lavfi","-t",f"{duration}","-i","anullsrc=r=48000:cl=stereo",

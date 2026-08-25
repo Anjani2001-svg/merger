@@ -1298,27 +1298,36 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
 
 
 def add_notebooklm_transition(intro, main, out, duration=1.0, direction="left"):
-    tm = {"left":"wipeleft","right":"wiperight","up":"wipeup","down":"wipedown"}
-    wipe = tm.get(direction,"wipeleft"); intro_d = _probe_duration(intro)
-    half = max(0.25, min(duration/2, intro_d-0.05))
-    cc = "color=c=black:s=1920x1080:r=30"
-    _ff(["ffmpeg","-y","-i",str(intro),"-i",str(main),
-         "-f","lavfi","-t",f"{duration}","-i",cc,
-         "-f","lavfi","-t",f"{duration}","-i","anullsrc=r=48000:cl=stereo",
-         "-filter_complex",
-         "[0:v]fps=30,format=yuv420p,settb=AVTB[v0];"
-         "[1:v]fps=30,format=yuv420p,settb=AVTB[v1];"
-         "[2:v]fps=30,format=yuv420p,settb=AVTB[vc];"
-         f"[v0][vc]xfade=transition={wipe}:duration={half}:offset={max(intro_d-half,0):.3f}[vx];"
-         f"[vx][v1]xfade=transition={wipe}:duration={half}:offset={intro_d:.3f}[vout];"
-         f"[0:a][3:a]acrossfade=d={half}:c1=tri:c2=tri[ax];"
-         f"[ax][1:a]acrossfade=d={half}:c1=tri:c2=tri[aout]",
-         "-map","[vout]","-map","[aout]",
-         "-c:v","libx264","-preset","ultrafast","-crf","23",
-         "-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
-         "-r","30","-pix_fmt","yuv420p",str(out)], timeout=180)
-    return Path(out)
+    """
+    Reliable transition between intro and main video.
+    Uses concat instead of xfade/lavfi to avoid FFmpeg filter failures
+    on Streamlit/cloud environments.
+    """
 
+    _ff([
+        "ffmpeg",
+        "-y",
+        "-i", str(intro),
+        "-i", str(main),
+        "-filter_complex",
+        "[0:v]fps=30,format=yuv420p[v0];"
+        "[1:v]fps=30,format=yuv420p[v1];"
+        "[v0][v1]concat=n=2:v=1:a=0[vout]",
+        "-map", "[vout]",
+        "-map", "0:a?",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "23",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-ar", "48000",
+        "-ac", "2",
+        "-r", "30",
+        "-pix_fmt", "yuv420p",
+        str(out)
+    ], timeout=180)
+
+    return Path(out)
 
 def concat(parts, out, tmp):
     lst = tmp/"list.txt"
@@ -2031,4 +2040,4 @@ if done_items:
                     _safe_url = item["gd_url"] if str(item["gd_url"]).startswith("https://") else "#"
                     st.markdown(f'<a href="{_esc(_safe_url)}" target="_blank" rel="noopener noreferrer" '
                                 f'style="color:#50c878">✅ View on Google Drive</a>',
-                                unsafe_allow_html=True)
+                                unsafe_allow_html=True

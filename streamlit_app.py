@@ -1223,7 +1223,12 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
         if progress_cb:
             progress_cb(f"   OCR cover active to ~{top_end:.1f}s")
     else:
-        gemini_match = _find_gemini_notebook_wordmark(inp_str, progress_cb=progress_cb)
+        # Template matching disabled for new Gemini Notebook exports.
+        # The watermark rendering changes between exports, resolutions and
+        # Google UI versions, so OCR/visual detection is used instead.
+        gemini_match = None
+        if progress_cb:
+            progress_cb("   Gemini template matching skipped - using dynamic detection only")
     if gemini_match:
         gx, gy, gw, gh = gemini_match["box"]
         # Generous padding removes the icon, all lettering, and antialiased edge

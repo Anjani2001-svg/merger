@@ -1289,11 +1289,11 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
     else:
         fc = "[1:v]format=rgba[br];[0:v][br]overlay=x=0:y=0[vout]"
     if trim_at is not None:
-        cmd += ["-filter_complex",fc,"-map","[vout]","-map","0:a",
+        cmd += ["-filter_complex",fc,"-map","[vout]","-map","0:a?","
                 "-t",f"{trim_at:.2f}","-c:v","libx264","-preset","ultrafast","-crf","23",
                 "-c:a","aac","-b:a","128k","-ar","48000","-ac","2","-r","30","-pix_fmt","yuv420p",out_str]
     else:
-        cmd += ["-filter_complex",fc,"-map","[vout]","-map","0:a",
+        cmd += ["-filter_complex",fc,"-map","[vout]","-map","0:a?","
                 "-c:v","libx264","-preset","ultrafast","-crf","23",
                 "-c:a","aac","-b:a","128k","-ar","48000","-ac","2","-r","30","-pix_fmt","yuv420p","-shortest",out_str]
     _ff(cmd, timeout=max(900, int(duration*25)))
@@ -1314,9 +1314,9 @@ def add_notebooklm_transition(intro, main, out, duration=1.0, direction="left"):
          "[2:v]fps=30,format=yuv420p,settb=AVTB[vc];"
          f"[v0][vc]xfade=transition={wipe}:duration={half}:offset={max(intro_d-half,0):.3f}[vx];"
          f"[vx][v1]xfade=transition={wipe}:duration={half}:offset={intro_d:.3f}[vout];"
-         f"[0:a][3:a]acrossfade=d={half}:c1=tri:c2=tri[ax];"
-         f"[ax][1:a]acrossfade=d={half}:c1=tri:c2=tri[aout]",
-         "-map","[vout]","-map","[aout]",
+         f"[0:a?][3:a]acrossfade=d={half}:c1=tri:c2=tri[ax];"
+         f"[ax][1:a?]acrossfade=d={half}:c1=tri:c2=tri[aout]",
+         "-map","[vout]","-map","[aout]?",
          "-c:v","libx264","-preset","ultrafast","-crf","23",
          "-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
          "-r","30","-pix_fmt","yuv420p",str(out)], timeout=180)
@@ -1637,7 +1637,9 @@ def _process_item(item: dict, bar_slot, msg_slot) -> dict:
 
             msg_slot.info("⏳ **3/4** — Adding 4-colour transition…")
             bar_slot.progress(65)
-            with_trans = add_notebooklm_transition(results["intro"], norm_clean, tmp/"intro_and_main.mp4")
+            intro_ready = normalise(results["intro"], tmp/"intro_ready.mp4")
+            main_ready = normalise(norm_clean, tmp/"main_ready.mp4")
+            with_trans = add_notebooklm_transition(intro_ready, main_ready, tmp/"intro_and_main.mp4")
 
             msg_slot.info("⏳ **4/4** — Merging final segments…")
             bar_slot.progress(85)

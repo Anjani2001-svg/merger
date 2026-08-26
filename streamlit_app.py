@@ -513,7 +513,7 @@ def make_intro(course, unit_num, unit_title, tmp):
     y = "if(lt(t\\,0.8)\\,300*pow(1-t/0.8\\,2)\\,0)"
     _ff(["ffmpeg","-y","-i",str(INTRO_TPL),"-loop","1","-i",png,"-filter_complex",
         f"[1:v]format=rgba[ovr];[0:v][ovr]overlay=x=0:y='{y}':shortest=1[out]",
-        "-map","[out]","-map","0:a?", "-c:v","libx264","-preset","ultrafast",
+        "-map","[out]","-map","0:a?","-c:v","libx264","-preset","ultrafast",
         "-crf","23","-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
         "-r","30","-pix_fmt","yuv420p",out], timeout=60)
     return Path(out)
@@ -525,7 +525,7 @@ def make_outro(tmp):
     y = "if(lt(t\\,0.8)\\,250*pow(1-t/0.8\\,2)\\,0)"
     _ff(["ffmpeg","-y","-i",str(INTRO_TPL),"-loop","1","-i",png,"-filter_complex",
         f"[1:v]format=rgba[ovr];[0:v][ovr]overlay=x=0:y='{y}':shortest=1[out]",
-        "-map","[out]","-map","0:a?", "-c:v","libx264","-preset","ultrafast",
+        "-map","[out]","-map","0:a?","-c:v","libx264","-preset","ultrafast",
         "-crf","23","-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
         "-r","30","-pix_fmt","yuv420p",out], timeout=60)
     return Path(out)
@@ -1289,11 +1289,11 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
     else:
         fc = "[1:v]format=rgba[br];[0:v][br]overlay=x=0:y=0[vout]"
     if trim_at is not None:
-        cmd += ["-filter_complex",fc,"-map","[vout]","-map","0:a?",
+        cmd += ["-filter_complex",fc,"-map","[vout]","-map","0:a",
                 "-t",f"{trim_at:.2f}","-c:v","libx264","-preset","ultrafast","-crf","23",
                 "-c:a","aac","-b:a","128k","-ar","48000","-ac","2","-r","30","-pix_fmt","yuv420p",out_str]
     else:
-        cmd += ["-filter_complex",fc,"-map","[vout]","-map","0:a?",
+        cmd += ["-filter_complex",fc,"-map","[vout]","-map","0:a",
                 "-c:v","libx264","-preset","ultrafast","-crf","23",
                 "-c:a","aac","-b:a","128k","-ar","48000","-ac","2","-r","30","-pix_fmt","yuv420p","-shortest",out_str]
     _ff(cmd, timeout=max(900, int(duration*25)))
@@ -1305,6 +1305,12 @@ def add_notebooklm_transition(intro, main, out, duration=1.0, direction="left"):
     wipe = tm.get(direction,"wipeleft"); intro_d = _probe_duration(intro)
     half = max(0.25, min(duration/2, intro_d-0.05))
     cc = "color=c=black:s=1920x1080:r=30"
+    # This step re-encodes the intro + the *entire* main video through the
+    # wipe-transition filter, so a fixed short timeout fails on anything
+    # longer than a couple of minutes. Scale the timeout to the main
+    # video's actual duration instead (same approach used elsewhere, e.g.
+    # remove_notebooklm_watermark).
+    main_d = _probe_duration(main)
     _ff(["ffmpeg","-y","-i",str(intro),"-i",str(main),
          "-f","lavfi","-t",f"{duration}","-i",cc,
          "-f","lavfi","-t",f"{duration}","-i","anullsrc=r=48000:cl=stereo",
@@ -1314,12 +1320,12 @@ def add_notebooklm_transition(intro, main, out, duration=1.0, direction="left"):
          "[2:v]fps=30,format=yuv420p,settb=AVTB[vc];"
          f"[v0][vc]xfade=transition={wipe}:duration={half}:offset={max(intro_d-half,0):.3f}[vx];"
          f"[vx][v1]xfade=transition={wipe}:duration={half}:offset={intro_d:.3f}[vout];"
-         f"[0:a?][3:a]acrossfade=d={half}:c1=tri:c2=tri[ax];"
-         f"[ax][1:a?]acrossfade=d={half}:c1=tri:c2=tri[aout]",
-         "-map","[vout]","-map","[aout]?",
+         f"[0:a][3:a]acrossfade=d={half}:c1=tri:c2=tri[ax];"
+         f"[ax][1:a]acrossfade=d={half}:c1=tri:c2=tri[aout]",
+         "-map","[vout]","-map","[aout]",
          "-c:v","libx264","-preset","ultrafast","-crf","23",
          "-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
-         "-r","30","-pix_fmt","yuv420p",str(out)], timeout=180)
+         "-r","30","-pix_fmt","yuv420p",str(out)], timeout=max(600, int(main_d*20)))
     return Path(out)
 
 
@@ -1637,9 +1643,7 @@ def _process_item(item: dict, bar_slot, msg_slot) -> dict:
 
             msg_slot.info("⏳ **3/4** — Adding 4-colour transition…")
             bar_slot.progress(65)
-            intro_ready = normalise(results["intro"], tmp/"intro_ready.mp4")
-            main_ready = normalise(norm_clean, tmp/"main_ready.mp4")
-            with_trans = add_notebooklm_transition(intro_ready, main_ready, tmp/"intro_and_main.mp4")
+            with_trans = add_notebooklm_transition(results["intro"], norm_clean, tmp/"intro_and_main.mp4")
 
             msg_slot.info("⏳ **4/4** — Merging final segments…")
             bar_slot.progress(85)

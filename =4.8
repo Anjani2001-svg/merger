@@ -1,0 +1,45 @@
+WARNING: Ignoring invalid distribution ~ip (C:\Python312\Lib\site-packages)
+WARNING: Ignoring invalid distribution ~umpy (C:\Python312\Lib\site-packages)
+WARNING: Ignoring invalid distribution ~ygments (C:\Python312\Lib\site-packages)
+Collecting opencv-python-headless
+  Using cached opencv_python_headless-4.13.0.92-cp37-abi3-win_amd64.whl.metadata (20 kB)
+Collecting msal
+  Using cached msal-1.35.1-py3-none-any.whl.metadata (11 kB)
+Collecting numpy>=2 (from opencv-python-headless)
+  Using cached numpy-2.4.3-cp312-cp312-win_amd64.whl.metadata (6.6 kB)
+Requirement already satisfied: requests<3,>=2.0.0 in c:\users\asus\appdata\roaming\python\python312\site-packages (from msal) (2.32.5)
+Requirement already satisfied: PyJWT<3,>=1.0.0 in c:\python312\lib\site-packages (from PyJWT[crypto]<3,>=1.0.0->msal) (2.10.1)
+Requirement already satisfied: cryptography<49,>=2.5 in c:\python312\lib\site-packages (from msal) (43.0.0)
+Requirement already satisfied: cffi>=1.12 in c:\users\asus\appdata\roaming\python\python312\site-packages (from cryptography<49,>=2.5->msal) (2.0.0)
+Requirement already satisfied: charset_normalizer<4,>=2 in c:\users\asus\appdata\roaming\python\python312\site-packages (from requests<3,>=2.0.0->msal) (3.4.4)
+Requirement already satisfied: idna<4,>=2.5 in c:\users\asus\appdata\roaming\python\python312\site-packages (from requests<3,>=2.0.0->msal) (3.11)
+Requirement already satisfied: urllib3<3,>=1.21.1 in c:\users\asus\appdata\roaming\python\python312\site-packages (from requests<3,>=2.0.0->msal) (2.6.2)
+Requirement already satisfied: certifi>=2017.4.17 in c:\users\asus\appdata\roaming\python\python312\site-packages (from requests<3,>=2.0.0->msal) (2026.1.4)
+Requirement already satisfied: pycparser in c:\users\asus\appdata\roaming\python\python312\site-packages (from cffi>=1.12->cryptography<49,>=2.5->msal) (2.23)
+Using cached opencv_python_headless-4.13.0.92-cp37-abi3-win_amd64.whl (40.1 MB)
+Using cached msal-1.35.1-py3-none-any.whl (119 kB)
+Using cached numpy-2.4.3-cp312-cp312-win_amd64.whl (12.3 MB)
+WARNING: Ignoring invalid distribution ~ip (C:\Python312\Lib\site-packages)
+WARNING: Ignoring invalid distribution ~umpy (C:\Python312\Lib\site-packages)
+WARNING: Ignoring invalid distribution ~ygments (C:\Python312\Lib\site-packages)
+Installing collected packages: numpy, opencv-python-headless, msal
+  Attempting uninstall: numpy
+    Found existing installation: numpy 1.26.4
+    Uninstalling numpy-1.26.4:
+      Successfully uninstalled numpy-1.26.4
+  WARNING: The scripts f2py.exe and numpy-config.exe are installed in 'C:\Users\Asus\AppData\Roaming\Python\Python312\Scripts' which is not on PATH.
+  Consider adding this directory to PATH or, if you prefer to suppress this warning, use --no-warn-script-location.
+
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+label-studio 1.12.1 requires numpy<2.0.0,>=1.24.3, but you have numpy 2.4.3 which is incompatible.
+label-studio 1.12.1 requires pydantic<=1.11.0,>=1.7.3, but you have pydantic 2.12.5 which is incompatible.
+label-studio 1.12.1 requires requests==2.31.0, but you have requests 2.32.5 which is incompatible.
+label-studio 1.12.1 requires urllib3<2.0.0,>=1.26.18, but you have urllib3 2.6.2 which is incompatible.
+numba 0.63.1 requires numpy<2.4,>=1.22, but you have numpy 2.4.3 which is incompatible.
+opencv-python 4.12.0.88 requires numpy<2.3.0,>=2; python_version >= "3.9", but you have numpy 2.4.3 which is incompatible.
+scipy 1.14.1 requires numpy<2.3,>=1.23.5, but you have numpy 2.4.3 which is incompatible.
+tensorflow-intel 2.17.0 requires numpy<2.0.0,>=1.26.0; python_version >= "3.12", but you have numpy 2.4.3 which is incompatible.
+Successfully installed msal-1.35.1 numpy-2.4.3 opencv-python-headless-4.13.0.92
+
+[notice] A new release of pip is available: 25.3 -> 26.0.1
+[notice] To update, run: python.exe -m pip install --upgrade pip

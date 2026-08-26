@@ -1273,7 +1273,7 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
     use_top = True
     en_top = f"between(t\\,0\\,{top_end:.2f})"
     if use_logo:
-        comp_png = _make_logo_composite(logo_path=SLC_LOGO, box=(WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H))
+        comp_png = _make_logo_composite(logo_path=SLC_LOGO, box=(cover_x, cover_y, cover_w, cover_h))
         fc = ("[1:v]format=rgba[comp];[0:v][comp]overlay=x=0:y=0[v1];"
               "[2:v]format=rgba[top];"
               f"[v1][top]overlay=x=0:y=0:enable='{en_top}'[vout]")

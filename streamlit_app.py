@@ -193,17 +193,23 @@ def _ft(path, size):
     except: return ImageFont.load_default()
 
 
-def _make_logo_composite(logo_path, box, W=1920, H=1080, bg=(249,249,249,255)):
+def _make_logo_composite(logo_path, box, W=1920, H=1080, bg=(255,255,255,255), logo_h=None):
     brx, bry, brw, brh = box
     img  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
+    # Solid white "plate" first, sized to fully hide the watermark behind it.
     draw.rounded_rectangle([brx, bry, brx+brw, bry+brh], radius=BOX_RADIUS, fill=bg)
-    logo_h_px = brh - 12
+    # The logo itself stays a fixed, modest size regardless of how tall/wide
+    # the cover box is — the box is often padded larger than the logo just
+    # to guarantee the watermark underneath is fully hidden, so scaling the
+    # logo to fill that whole box makes it look oversized.
+    logo_h_px = logo_h if logo_h else min(60, brh - 12)
     logo_img  = Image.open(str(logo_path)).convert("RGBA")
     ratio     = logo_img.width / logo_img.height
     logo_w_px = int(logo_h_px * ratio)
-    if logo_w_px > brw - 12:
-        logo_w_px = brw - 12
+    max_w = brw - 24
+    if logo_w_px > max_w:
+        logo_w_px = max_w
         logo_h_px = int(logo_w_px / ratio)
     logo_img  = logo_img.resize((logo_w_px, logo_h_px), Image.LANCZOS)
     cx     = brx + brw // 2; cy = bry + brh // 2
@@ -1214,7 +1220,7 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
     br_box = (WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H)
     br_png = tmp / "wm_br.png"
     if use_logo:
-        br_png = _make_logo_composite(logo_path=SLC_LOGO, box=br_box)
+        br_png = _make_logo_composite(logo_path=SLC_LOGO, box=br_box, logo_h=56)
     else:
         _make_box_png([(*br_box, BOX_RADIUS)], br_png, colour=(249, 249, 249, 255))
 
@@ -1272,7 +1278,7 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
     if opening_box:
         open_png = tmp / "wm_open.png"
         if use_logo:
-            open_png = _make_logo_composite(logo_path=SLC_LOGO, box=opening_box)
+            open_png = _make_logo_composite(logo_path=SLC_LOGO, box=opening_box, logo_h=44)
         else:
             _make_box_png([(*opening_box, BOX_RADIUS)], open_png, colour=(249, 249, 249, 255))
         en_top = f"between(t\\,0\\,{top_end:.2f})"

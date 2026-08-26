@@ -20,6 +20,12 @@ import numpy as np
 import streamlit as st
 
 try:
+    import pytesseract
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+
+try:
     import cv2
     CV2_AVAILABLE = True
 except ImportError:
@@ -46,7 +52,13 @@ SLC_LOGO  = BASE_DIR / "assets" / "slc_logo.png"
 GEMINI_NOTEBOOK_TEMPLATE = BASE_DIR / "assets" / "gemini_notebook_template.png"
 
 # ── Watermark / badge cover ───────────────────────────────────────────────
-WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1655, 960, 240, 72
+# NOTE: Google has since moved the persistent "Gemini Notebook" wordmark
+# slightly lower/further right than these coordinates originally assumed.
+# Measured from a real 1920x1080 export (Aug 2026): the wordmark's own
+# pixels sit at roughly x=1738-1907, y=1046-1064. The box below is padded
+# generously around that so the cover (and the SLC logo placed inside it)
+# fully hides the wordmark instead of sitting above/short of it.
+WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H = 1645, 950, 275, 125
 WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H = 700, 36, 520, 110
 
 BOX_RADIUS = 10
@@ -181,17 +193,23 @@ def _ft(path, size):
     except: return ImageFont.load_default()
 
 
-def _make_logo_composite(logo_path, box, W=1920, H=1080, bg=(249,249,249,255)):
+def _make_logo_composite(logo_path, box, W=1920, H=1080, bg=(255,255,255,255), logo_h=None):
     brx, bry, brw, brh = box
     img  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
+    # Solid white "plate" first, sized to fully hide the watermark behind it.
     draw.rounded_rectangle([brx, bry, brx+brw, bry+brh], radius=BOX_RADIUS, fill=bg)
-    logo_h_px = brh - 12
+    # The logo itself stays a fixed, modest size regardless of how tall/wide
+    # the cover box is — the box is often padded larger than the logo just
+    # to guarantee the watermark underneath is fully hidden, so scaling the
+    # logo to fill that whole box makes it look oversized.
+    logo_h_px = logo_h if logo_h else min(60, brh - 12)
     logo_img  = Image.open(str(logo_path)).convert("RGBA")
     ratio     = logo_img.width / logo_img.height
     logo_w_px = int(logo_h_px * ratio)
-    if logo_w_px > brw - 12:
-        logo_w_px = brw - 12
+    max_w = brw - 24
+    if logo_w_px > max_w:
+        logo_w_px = max_w
         logo_h_px = int(logo_w_px / ratio)
     logo_img  = logo_img.resize((logo_w_px, logo_h_px), Image.LANCZOS)
     cx     = brx + brw // 2; cy = bry + brh // 2
@@ -1087,6 +1105,100 @@ def _detect_fixed_badge_end_guaranteed(path, progress_cb=None, max_scan=60.0):
         progress_cb(f'   Fixed top logo remains visible — covering through {end_t:.1f}s')
     return end_t
 
+
+def _find_gemini_notebook_ocr_box(path, progress_cb=None, max_scan=12.0):
+    """Hybrid Gemini Notebook detector.
+
+    Uses OCR with image enhancement because the new watermark is small,
+    grey and anti-aliased. Also searches for the icon/text combination area.
+    Returns coordinates in 1920x1080 space.
+    """
+    if not OCR_AVAILABLE or not CV2_AVAILABLE:
+        return None
+
+    keywords = ("gemini notebook", "notebooklm", "gemini")
+    duration = min(_probe_duration(str(path)), max_scan)
+
+    for t in np.arange(0, duration, 0.5):
+        frame = _grab_cv_gray_frame(path, float(t))
+        if frame is None:
+            continue
+
+        try:
+            # Improve faint grey watermark visibility
+            enlarged = cv2.resize(frame, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+            enhanced = clahe.apply(enlarged)
+            thresh = cv2.threshold(enhanced, 180, 255, cv2.THRESH_BINARY_INV)[1]
+
+            variants = [enhanced, thresh]
+            fh, fw = frame.shape[:2]
+
+            for img in variants:
+                data = pytesseract.image_to_data(
+                    img,
+                    config='--psm 11',
+                    output_type=pytesseract.Output.DICT
+                )
+
+                words = []
+                for i, txt in enumerate(data.get('text', [])):
+                    clean = re.sub(r'[^a-z ]', '', txt.lower()).strip()
+                    if clean:
+                        words.append(clean)
+
+                joined = ' '.join(words)
+                if any(k in joined for k in keywords):
+                    xs=[]; ys=[]; x2=[]; y2=[]
+                    for i, txt in enumerate(data.get('text', [])):
+                        clean = re.sub(r'[^a-z ]', '', txt.lower()).strip()
+                        if clean and any(part in clean for part in ('gemini','notebook','notebooklm')):
+                            x=int(data['left'][i]/2)
+                            y=int(data['top'][i]/2)
+                            w=int(data['width'][i]/2)
+                            h=int(data['height'][i]/2)
+                            xs.append(x); ys.append(y); x2.append(x+w); y2.append(y+h)
+
+                    if xs:
+                        x=min(xs); y=min(ys)
+                        w=max(x2)-x; h=max(y2)-y
+                    else:
+                        continue
+
+                    box=(
+                        int(x*1920/fw),
+                        int(y*1080/fh),
+                        max(40,int(w*1920/fw)),
+                        max(20,int(h*1080/fh))
+                    )
+
+                    if progress_cb:
+                        progress_cb(f"   Gemini OCR detected {box}")
+                    return {'box':box,'time':float(t)}
+
+            # Fallback: known Gemini watermark area, detect dark pixels
+            # bottom area even if OCR misses the text.
+            crop = frame[int(fh*0.75):fh, int(fw*0.55):fw]
+            if crop.size:
+                dark = (crop < 190).mean()
+                if dark > 0.01:
+                    box=(
+                        int(fw*0.55*1920/fw)-20,
+                        int(fh*0.75*1080/fh)-15,
+                        int(fw*0.35*1920/fw)+40,
+                        int(fh*0.15*1080/fh)+30
+                    )
+                    if progress_cb:
+                        progress_cb(f"   Gemini visual fallback detected {box}")
+                    return {'box':box,'time':float(t)}
+
+        except Exception as e:
+            if progress_cb:
+                progress_cb(f"   OCR error: {e}")
+
+    return None
+
+
 def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None):
     inp_str, out_str = str(inp), str(out)
     if progress_cb: progress_cb("Detecting end-card start time…")
@@ -1102,71 +1214,80 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
         if progress_cb: progress_cb("   No end card to trim")
     use_logo = SLC_LOGO.exists() and SLC_LOGO.stat().st_size > 500
 
-    # --- Current Gemini Notebook opening-wordmark cover ---
-    # The old implementation tried to identify the opening badge by comparing
-    # it with the persistent NotebookLM watermark. Google now renders the
-    # opening brand as "Gemini Notebook", so we match that wordmark directly.
-    if progress_cb:
-        progress_cb("Detecting current Gemini Notebook opening wordmark…")
-    top_png = tmp / "wm_top.png"
+    # --- Persistent bottom-right "Gemini Notebook" badge cover ────────────
+    # This badge is present for the whole video, so it always gets covered
+    # (with the SLC logo composited into the same box, if available).
+    br_box = (WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H)
+    br_png = tmp / "wm_br.png"
+    if use_logo:
+        br_png = _make_logo_composite(logo_path=SLC_LOGO, box=br_box, logo_h=56)
+    else:
+        _make_box_png([(*br_box, BOX_RADIUS)], br_png, colour=(249, 249, 249, 255))
 
-    gemini_match = _find_gemini_notebook_wordmark(inp_str, progress_cb=progress_cb)
+    # --- Optional separate opening-title wordmark cover ────────────────────
+    # Some exports also show a larger "Gemini Notebook" wordmark on the
+    # opening title card, in a different spot from the persistent badge
+    # above. When present, we cover that too, but ONLY for the seconds it is
+    # actually on screen — never permanently, since that area holds real
+    # video content for the rest of the clip.
+    if progress_cb:
+        progress_cb("Detecting a separate opening-title Gemini Notebook wordmark…")
+    gemini_match = _find_gemini_notebook_ocr_box(inp_str, progress_cb=progress_cb)
+    if not gemini_match and progress_cb:
+        progress_cb("   No separate opening wordmark found — covering only the persistent badge")
+
+    opening_box = None
+    top_end = 0.0
     if gemini_match:
         gx, gy, gw, gh = gemini_match["box"]
         # Generous padding removes the icon, all lettering, and antialiased edge
         # pixels while avoiding the large title below.
         pad_x, pad_y = 28, 18
-        cover_x = max(0, gx - pad_x)
-        cover_y = max(0, gy - pad_y)
-        cover_w = min(1920 - cover_x, gw + pad_x * 2)
-        cover_h = min(1080 - cover_y, gh + pad_y * 2)
-        top_end = _track_gemini_notebook_end(
-            inp_str, gemini_match, progress_cb=progress_cb, max_scan=60.0
-        )
-        if top_end is None or top_end <= 0:
-            top_end = _detect_fixed_badge_end_guaranteed(
-                inp_str, progress_cb=progress_cb, max_scan=60.0
-            )
-        if top_end is None or top_end <= 0:
-            top_end = min(15.0, duration)
-        if progress_cb:
-            progress_cb(
-                f"   ✅ Gemini-specific cover active to ~{top_end:.1f}s "
-                f"at ({cover_x},{cover_y}) {cover_w}x{cover_h}"
-            )
-    else:
-        # Safety fallback for a future rebrand or a low-confidence match.
-        cover_x, cover_y, cover_w, cover_h = WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H
-        top_end = _detect_fixed_badge_end_guaranteed(
-            inp_str, progress_cb=progress_cb, max_scan=60.0
-        )
-        if top_end is None or top_end <= 0:
-            top_end = min(15.0, duration)
-        if progress_cb:
-            progress_cb(
-                f"   ⚠️ Gemini template not matched — fallback cover active to ~{top_end:.1f}s"
-            )
+        ox = max(0, gx - pad_x)
+        oy = max(0, gy - pad_y)
+        ow = min(1920 - ox, gw + pad_x * 2)
+        oh = min(1080 - oy, gh + pad_y * 2)
 
-    _make_box_png(
-        [(cover_x, cover_y, cover_w, cover_h, BOX_RADIUS)],
-        top_png,
-        colour=(249, 249, 249, 255),
-    )
-    use_top = True
-    en_top = f"between(t\\,0\\,{top_end:.2f})"
-    if use_logo:
-        comp_png = _make_logo_composite(logo_path=SLC_LOGO, box=(WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H))
-        fc = ("[1:v]format=rgba[comp];[0:v][comp]overlay=x=0:y=0[v1];"
-              "[2:v]format=rgba[top];"
-              f"[v1][top]overlay=x=0:y=0:enable='{en_top}'[vout]")
-        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(comp_png),"-i",str(top_png)]
+        # If the "opening" match actually falls inside/on top of the
+        # persistent bottom-right box, it's the same badge — don't cover it
+        # twice (that duplicate cover, drawn only for a few seconds, is what
+        # previously blanked out the SLC logo instead of showing it).
+        bx, by, bw, bh = br_box
+        overlaps_br = not (ox + ow <= bx or bx + bw <= ox or oy + oh <= by or by + bh <= oy)
+        if overlaps_br:
+            if progress_cb:
+                progress_cb("   Detected wordmark overlaps the persistent badge — using single cover only")
+        else:
+            opening_box = (ox, oy, ow, oh)
+            top_end = _track_gemini_notebook_end(
+                inp_str, gemini_match, progress_cb=progress_cb, max_scan=60.0
+            )
+            if top_end is None or top_end <= 0:
+                top_end = _detect_fixed_badge_end_guaranteed(
+                    inp_str, progress_cb=progress_cb, max_scan=60.0
+                )
+            if top_end is None or top_end <= 0:
+                top_end = min(15.0, duration)
+            if progress_cb:
+                progress_cb(
+                    f"   ✅ Separate opening cover active to ~{top_end:.1f}s "
+                    f"at ({ox},{oy}) {ow}x{oh}"
+                )
+
+    cmd = ["ffmpeg", "-y", "-i", inp_str, "-i", str(br_png)]
+    if opening_box:
+        open_png = tmp / "wm_open.png"
+        if use_logo:
+            open_png = _make_logo_composite(logo_path=SLC_LOGO, box=opening_box, logo_h=44)
+        else:
+            _make_box_png([(*opening_box, BOX_RADIUS)], open_png, colour=(249, 249, 249, 255))
+        en_top = f"between(t\\,0\\,{top_end:.2f})"
+        fc = ("[1:v]format=rgba[br];[0:v][br]overlay=x=0:y=0[vbr];"
+              "[2:v]format=rgba[op];"
+              f"[vbr][op]overlay=x=0:y=0:enable='{en_top}'[vout]")
+        cmd += ["-i", str(open_png)]
     else:
-        br_png = tmp/"wm_br.png"
-        _make_box_png([(WM_BR_X,WM_BR_Y,WM_BR_W,WM_BR_H,BOX_RADIUS)], br_png, colour=(249,249,249,255))
-        fc = ("[1:v]format=rgba[br];[0:v][br]overlay=x=0:y=0[v1];"
-              "[2:v]format=rgba[top];"
-              f"[v1][top]overlay=x=0:y=0:enable='{en_top}'[vout]")
-        cmd = ["ffmpeg","-y","-i",inp_str,"-i",str(br_png),"-i",str(top_png)]
+        fc = "[1:v]format=rgba[br];[0:v][br]overlay=x=0:y=0[vout]"
     if trim_at is not None:
         cmd += ["-filter_complex",fc,"-map","[vout]","-map","0:a",
                 "-t",f"{trim_at:.2f}","-c:v","libx264","-preset","ultrafast","-crf","23",
@@ -1183,11 +1304,7 @@ def add_notebooklm_transition(intro, main, out, duration=1.0, direction="left"):
     tm = {"left":"wipeleft","right":"wiperight","up":"wipeup","down":"wipedown"}
     wipe = tm.get(direction,"wipeleft"); intro_d = _probe_duration(intro)
     half = max(0.25, min(duration/2, intro_d-0.05))
-    cc = ("color=c=0x7B2CBF:s=1920x1080:r=30,"
-          "drawbox=x=0:y=0:w=576:h=1080:color=0x7B2CBF:t=fill,"
-          "drawbox=x=576:y=0:w=461:h=1080:color=0x4285F4:t=fill,"
-          "drawbox=x=1037:y=0:w=346:h=1080:color=0x7EDFC3:t=fill,"
-          "drawbox=x=1383:y=0:w=537:h=1080:color=0xB7E4C7:t=fill")
+    cc = "color=c=black:s=1920x1080:r=30"
     _ff(["ffmpeg","-y","-i",str(intro),"-i",str(main),
          "-f","lavfi","-t",f"{duration}","-i",cc,
          "-f","lavfi","-t",f"{duration}","-i","anullsrc=r=48000:cl=stereo",

@@ -1300,19 +1300,79 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
     return Path(out)
 
 
-def add_notebooklm_transition(intro, main, out, duration=1.0, direction="left"):
+def _find_keyframe_at_or_after(path, target_t, window=30.0):
+    """Return the timestamp (seconds) of the first video keyframe at or
+    after target_t, scanning only a `window`-second slice of the file
+    (fast — decodes keyframes only, not the whole video). Returns None if
+    no keyframe is found in that slice.
+    """
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-skip_frame", "nokey",
+             "-show_entries", "frame=pts_time",
+             "-read_intervals", f"{target_t:.3f}%+{window:.0f}",
+             "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=30)
+        for line in r.stdout.strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                t = float(line)
+            except ValueError:
+                continue
+            if t >= target_t - 0.001:
+                return t
+    except Exception:
+        pass
+    return None
+
+
+def add_notebooklm_transition(intro, main, out, tmp, duration=1.0, direction="left"):
     tm = {"left":"wipeleft","right":"wiperight","up":"wipeup","down":"wipedown"}
     wipe = tm.get(direction,"wipeleft"); intro_d = _probe_duration(intro)
     half = max(0.25, min(duration/2, intro_d-0.05))
     cc = "color=c=black:s=1920x1080:r=30"
-    # This step re-encodes the intro + the *entire* main video through the
-    # wipe-transition filter, so a fixed short timeout fails on anything
-    # longer than a couple of minutes. Scale the timeout to the main
-    # video's actual duration instead (same approach used elsewhere, e.g.
-    # remove_notebooklm_watermark).
     main_d = _probe_duration(main)
-    _ff(["ffmpeg","-y","-i",str(intro),"-i",str(main),
-         "-f","lavfi","-t",f"{duration}","-i",cc,
+
+    # The transition filter below only ever blends in the first `half`
+    # seconds of `main` — everything after that plays back completely
+    # unchanged. Re-encoding the *entire* main video just to add that
+    # first fraction of a second of blending wastes huge amounts of time
+    # on longer videos. When main is long enough, split it at a keyframe
+    # just past the point the transition actually needs, re-encode only
+    # that short head alongside the intro, and stream-copy (no re-encode,
+    # near-instant) the much larger remainder before concatenating.
+    needed = half + 1.0
+    split_t = None
+    if main_d > needed + 3.0:
+        candidate = _find_keyframe_at_or_after(main, needed)
+        if candidate is not None and candidate < main_d - 0.5:
+            split_t = candidate
+
+    tail = None
+    if split_t is None:
+        main_input = ["-i", str(main)]
+        trans_timeout = max(600, int(main_d * 20))
+        trans_out = out
+    else:
+        main_input = ["-t", f"{split_t:.3f}", "-i", str(main)]
+        trans_timeout = 120  # only ~split_t seconds of main are encoded now
+        trans_out = tmp / "transition_head.mp4"
+        tail = tmp / "main_tail.mp4"
+        # A tiny epsilon nudges past the keyframe's exact timestamp. Without
+        # it, floating-point rounding can make ffmpeg treat `-ss` as landing
+        # a hair *before* the keyframe and seek back to the previous one
+        # instead (often frame 0 — i.e. no trim at all). The epsilon is far
+        # smaller than the gap to the next keyframe, so it can't overshoot.
+        tail_ss = split_t + 0.02
+        _ff(["ffmpeg", "-y", "-ss", f"{tail_ss:.3f}", "-i", str(main),
+             "-c", "copy", "-avoid_negative_ts", "make_zero", str(tail)],
+            timeout=120)
+
+    _ff(["ffmpeg","-y","-i",str(intro)] + main_input +
+        ["-f","lavfi","-t",f"{duration}","-i",cc,
          "-f","lavfi","-t",f"{duration}","-i","anullsrc=r=48000:cl=stereo",
          "-filter_complex",
          "[0:v]fps=30,format=yuv420p,settb=AVTB[v0];"
@@ -1325,8 +1385,11 @@ def add_notebooklm_transition(intro, main, out, duration=1.0, direction="left"):
          "-map","[vout]","-map","[aout]",
          "-c:v","libx264","-preset","ultrafast","-crf","23",
          "-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
-         "-r","30","-pix_fmt","yuv420p",str(out)], timeout=max(600, int(main_d*20)))
-    return Path(out)
+         "-r","30","-pix_fmt","yuv420p",str(trans_out)], timeout=trans_timeout)
+
+    if tail is None:
+        return Path(out)
+    return concat([trans_out, tail], out, tmp)
 
 
 def concat(parts, out, tmp):
@@ -1643,7 +1706,7 @@ def _process_item(item: dict, bar_slot, msg_slot) -> dict:
 
             msg_slot.info("⏳ **3/4** — Adding 4-colour transition…")
             bar_slot.progress(65)
-            with_trans = add_notebooklm_transition(results["intro"], norm_clean, tmp/"intro_and_main.mp4")
+            with_trans = add_notebooklm_transition(results["intro"], norm_clean, tmp/"intro_and_main.mp4", tmp)
 
             msg_slot.info("⏳ **4/4** — Merging final segments…")
             bar_slot.progress(85)

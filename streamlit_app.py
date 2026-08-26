@@ -513,7 +513,7 @@ def make_intro(course, unit_num, unit_title, tmp):
     y = "if(lt(t\\,0.8)\\,300*pow(1-t/0.8\\,2)\\,0)"
     _ff(["ffmpeg","-y","-i",str(INTRO_TPL),"-loop","1","-i",png,"-filter_complex",
         f"[1:v]format=rgba[ovr];[0:v][ovr]overlay=x=0:y='{y}':shortest=1[out]",
-        "-map","[out]","-map","0:a?",-c:v","libx264","-preset","ultrafast",
+        "-map","[out]","-map","0:a?", "-c:v","libx264","-preset","ultrafast",
         "-crf","23","-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
         "-r","30","-pix_fmt","yuv420p",out], timeout=60)
     return Path(out)
@@ -525,7 +525,7 @@ def make_outro(tmp):
     y = "if(lt(t\\,0.8)\\,250*pow(1-t/0.8\\,2)\\,0)"
     _ff(["ffmpeg","-y","-i",str(INTRO_TPL),"-loop","1","-i",png,"-filter_complex",
         f"[1:v]format=rgba[ovr];[0:v][ovr]overlay=x=0:y='{y}':shortest=1[out]",
-        "-map","[out]","-map","0:a?",-c:v","libx264","-preset","ultrafast",
+        "-map","[out]","-map","0:a?", "-c:v","libx264","-preset","ultrafast",
         "-crf","23","-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
         "-r","30","-pix_fmt","yuv420p",out], timeout=60)
     return Path(out)

@@ -1214,14 +1214,7 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
     gemini_match = _find_gemini_notebook_ocr_box(inp_str, progress_cb=progress_cb)
     if gemini_match:
         gx, gy, gw, gh = gemini_match["box"]
-        pad_x, pad_y = 35, 22
-        cover_x = max(0, gx - pad_x)
-        cover_y = max(0, gy - pad_y)
-        cover_w = min(1920 - cover_x, gw + pad_x * 2)
-        cover_h = min(1080 - cover_y, gh + pad_y * 2)
-        top_end = min(15.0, duration)
-        if progress_cb:
-            progress_cb(f"   OCR cover active to ~{top_end:.1f}s")
+        # Keep coordinate calculation in the main branch below.
     else:
         # Template matching disabled for new Gemini Notebook exports.
         # The watermark rendering changes between exports, resolutions and
@@ -1253,16 +1246,15 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
                 f"at ({cover_x},{cover_y}) {cover_w}x{cover_h}"
             )
     else:
-        # Safety fallback for a future rebrand or a low-confidence match.
-        cover_x, cover_y, cover_w, cover_h = WM_TOP_X, WM_TOP_Y, WM_TOP_W, WM_TOP_H
-        top_end = _detect_fixed_badge_end_guaranteed(
-            inp_str, progress_cb=progress_cb, max_scan=60.0
-        )
-        if top_end is None or top_end <= 0:
-            top_end = min(15.0, duration)
+        # Safety fallback for the persistent NotebookLM/Gemini watermark.
+        # Use the historical bottom-right position so the replacement never
+        # jumps to the top of the video when dynamic detection misses.
+        cover_x, cover_y, cover_w, cover_h = WM_BR_X, WM_BR_Y, WM_BR_W, WM_BR_H
+        top_end = duration
         if progress_cb:
             progress_cb(
-                f"   ⚠️ Gemini template not matched — fallback cover active to ~{top_end:.1f}s"
+                f"   ⚠️ Dynamic Gemini detection unavailable — using bottom-right "
+                f"fallback at ({cover_x},{cover_y}) {cover_w}x{cover_h} for the full video"
             )
 
     _make_box_png(
@@ -1273,6 +1265,7 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
     use_top = True
     en_top = f"between(t\\,0\\,{top_end:.2f})"
     if use_logo:
+        # Place the SLC logo in the exact same detected area as the Gemini/NotebookLM watermark.
         comp_png = _make_logo_composite(logo_path=SLC_LOGO, box=(cover_x, cover_y, cover_w, cover_h))
         fc = ("[1:v]format=rgba[comp];[0:v][comp]overlay=x=0:y=0[v1];"
               "[2:v]format=rgba[top];"
@@ -1298,36 +1291,27 @@ def remove_notebooklm_watermark(inp, out, src_resolution, tmp, progress_cb=None)
 
 
 def add_notebooklm_transition(intro, main, out, duration=1.0, direction="left"):
-    """
-    Reliable transition between intro and main video.
-    Uses concat instead of xfade/lavfi to avoid FFmpeg filter failures
-    on Streamlit/cloud environments.
-    """
-
-    _ff([
-        "ffmpeg",
-        "-y",
-        "-i", str(intro),
-        "-i", str(main),
-        "-filter_complex",
-        "[0:v]fps=30,format=yuv420p[v0];"
-        "[1:v]fps=30,format=yuv420p[v1];"
-        "[v0][v1]concat=n=2:v=1:a=0[vout]",
-        "-map", "[vout]",
-        "-map", "0:a?",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-crf", "23",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-ar", "48000",
-        "-ac", "2",
-        "-r", "30",
-        "-pix_fmt", "yuv420p",
-        str(out)
-    ], timeout=180)
-
+    tm = {"left":"wipeleft","right":"wiperight","up":"wipeup","down":"wipedown"}
+    wipe = tm.get(direction,"wipeleft"); intro_d = _probe_duration(intro)
+    half = max(0.25, min(duration/2, intro_d-0.05))
+    cc = "color=c=black:s=1920x1080:r=30"
+    _ff(["ffmpeg","-y","-i",str(intro),"-i",str(main),
+         "-f","lavfi","-t",f"{duration}","-i",cc,
+         "-f","lavfi","-t",f"{duration}","-i","anullsrc=r=48000:cl=stereo",
+         "-filter_complex",
+         "[0:v]fps=30,format=yuv420p,settb=AVTB[v0];"
+         "[1:v]fps=30,format=yuv420p,settb=AVTB[v1];"
+         "[2:v]fps=30,format=yuv420p,settb=AVTB[vc];"
+         f"[v0][vc]xfade=transition={wipe}:duration={half}:offset={max(intro_d-half,0):.3f}[vx];"
+         f"[vx][v1]xfade=transition={wipe}:duration={half}:offset={intro_d:.3f}[vout];"
+         f"[0:a][3:a]acrossfade=d={half}:c1=tri:c2=tri[ax];"
+         f"[ax][1:a]acrossfade=d={half}:c1=tri:c2=tri[aout]",
+         "-map","[vout]","-map","[aout]",
+         "-c:v","libx264","-preset","ultrafast","-crf","23",
+         "-c:a","aac","-b:a","128k","-ar","48000","-ac","2",
+         "-r","30","-pix_fmt","yuv420p",str(out)], timeout=180)
     return Path(out)
+
 
 def concat(parts, out, tmp):
     lst = tmp/"list.txt"
